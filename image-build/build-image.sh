@@ -62,6 +62,16 @@ EOF
 touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
 touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 
+# Patch stage0 to refresh Debian GPG keys before apt-get update
+# (Needed because Docker base image may have stale keys)
+mkdir -p "$PIGEN_DIR/stage0/00-fix-keys"
+cat > "$PIGEN_DIR/stage0/00-fix-keys/00-run-chroot.sh" <<'KEYFIX'
+#!/bin/bash -e
+apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6ED0E7B82643E131 78DBA3BC47EF2265 F8D2585B8783D481 54404762BBB6E853 BDE6D2B9216EC7A8 0E98404D386FA1D9 A48449044AAD5C5D || true
+apt-get update || true
+KEYFIX
+chmod +x "$PIGEN_DIR/stage0/00-fix-keys/00-run-chroot.sh"
+
 # ─── Step 3: Create WiFry custom stage ───────────────────────────────
 
 echo "Creating WiFry stage..."
