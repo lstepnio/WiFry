@@ -71,9 +71,9 @@ if [[ -f "$PRERUN" ]]; then
 
 # WiFry patch: install fresh Debian archive keyring into rootfs
 echo "WiFry: Fetching fresh debian-archive-keyring..."
-KEYRING_URL="http://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.4_all.deb"
-wget -q "$KEYRING_URL" -O /tmp/debian-archive-keyring.deb 2>/dev/null || \
-    curl -sL "$KEYRING_URL" -o /tmp/debian-archive-keyring.deb
+KEYRING_URL="http://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb"
+curl -sL -o /tmp/debian-archive-keyring.deb "$KEYRING_URL" || \
+    wget -q -O /tmp/debian-archive-keyring.deb "$KEYRING_URL" 2>/dev/null
 if [ -f /tmp/debian-archive-keyring.deb ]; then
     dpkg-deb -x /tmp/debian-archive-keyring.deb "${ROOTFS_DIR}/"
     echo "WiFry: Fresh keyring installed into rootfs"
