@@ -35,7 +35,7 @@ echo ""
 
 if [[ ! -d "$PIGEN_DIR" ]]; then
     echo "Cloning pi-gen..."
-    git clone --depth 1 https://github.com/RPi-Distro/pi-gen.git "$PIGEN_DIR"
+    git clone --depth 1 --branch arm64 https://github.com/RPi-Distro/pi-gen.git "$PIGEN_DIR"
 else
     echo "pi-gen already cloned."
 fi
