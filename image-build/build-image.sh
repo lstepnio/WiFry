@@ -62,17 +62,25 @@ EOF
 touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
 touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 
-# Patch pi-gen's stage0/00-configure-apt to import fresh Debian GPG keys
-# before running apt-get update. The Docker base image has stale keys.
-CONFIGURE_APT="$PIGEN_DIR/stage0/00-configure-apt/00-run.sh"
-if [[ -f "$CONFIGURE_APT" ]]; then
-    # Prepend key import before the first apt-get update
-    sed -i '/apt-get update/i\
-# WiFry patch: import fresh Debian GPG keys\
-apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6ED0E7B82643E131 78DBA3BC47EF2265 F8D2585B8783D481 54404762BBB6E853 BDE6D2B9216EC7A8 0E98404D386FA1D9 A48449044AAD5C5D 2>/dev/null || true' "$CONFIGURE_APT"
-    echo "Patched $CONFIGURE_APT with GPG key import"
-else
-    echo "WARNING: Could not find $CONFIGURE_APT to patch"
+# Fix Debian GPG key issue: download fresh debian-archive-keyring and
+# install it into the rootfs before pi-gen runs apt-get update.
+# We do this by patching stage0's prerun.sh to fetch and install the keyring.
+PRERUN="$PIGEN_DIR/stage0/prerun.sh"
+if [[ -f "$PRERUN" ]]; then
+    cat >> "$PRERUN" <<'KEYFIX'
+
+# WiFry patch: install fresh Debian archive keyring into rootfs
+echo "WiFry: Fetching fresh debian-archive-keyring..."
+KEYRING_URL="http://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.4_all.deb"
+wget -q "$KEYRING_URL" -O /tmp/debian-archive-keyring.deb 2>/dev/null || \
+    curl -sL "$KEYRING_URL" -o /tmp/debian-archive-keyring.deb
+if [ -f /tmp/debian-archive-keyring.deb ]; then
+    dpkg-deb -x /tmp/debian-archive-keyring.deb "${ROOTFS_DIR}/"
+    echo "WiFry: Fresh keyring installed into rootfs"
+    rm -f /tmp/debian-archive-keyring.deb
+fi
+KEYFIX
+    echo "Patched $PRERUN with keyring install"
 fi
 
 # ─── Step 3: Create WiFry custom stage ───────────────────────────────
