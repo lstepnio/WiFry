@@ -66,7 +66,7 @@ touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 # Remove them from the package list to prevent build failure
 STAGE2_PKGS="$PIGEN_DIR/stage2/01-sys-tweaks/00-packages"
 if [[ -f "$STAGE2_PKGS" ]]; then
-    sed -i '/^rpi-swap$/d; /^rpi-loop-utils$/d; /^rpi-usb-gadget$/d' "$STAGE2_PKGS"
+    sed -i 's/rpi-swap//g; s/rpi-loop-utils//g; s/rpi-usb-gadget//g' "$STAGE2_PKGS"
     echo "Patched stage2 packages (removed unavailable rpi-* packages)"
 fi
 
