@@ -48,9 +48,13 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: object) -> None:
         # Ensure data directories exist when not in mock mode
+        # Silently skip if we don't have permissions (e.g., CI environment)
         if not self.mock_mode:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-            self.captures_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+                self.captures_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass  # Running in CI or unprivileged environment
 
 
 settings = Settings()
