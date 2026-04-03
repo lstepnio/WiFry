@@ -62,6 +62,14 @@ EOF
 touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
 touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 
+# Fix stage2 missing packages: some rpi-* packages don't exist in the repo
+# Remove them from the package list to prevent build failure
+STAGE2_PKGS="$PIGEN_DIR/stage2/01-sys-tweaks/00-packages"
+if [[ -f "$STAGE2_PKGS" ]]; then
+    sed -i '/^rpi-swap$/d; /^rpi-loop-utils$/d; /^rpi-usb-gadget$/d' "$STAGE2_PKGS"
+    echo "Patched stage2 packages (removed unavailable rpi-* packages)"
+fi
+
 # Fix Debian GPG key issue: download fresh debian-archive-keyring and
 # install it into the rootfs before pi-gen runs apt-get update.
 # We do this by patching stage0's prerun.sh to fetch and install the keyring.
