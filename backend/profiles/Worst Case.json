@@ -1,0 +1,12 @@
+{
+  "name": "Worst Case",
+  "description": "Stress test scenario",
+  "builtin": true,
+  "category": "network",
+  "tags": ["stress-test", "extreme"],
+  "config": {
+    "delay": { "ms": 200, "jitter_ms": 100, "correlation_pct": 25 },
+    "loss": { "pct": 3, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

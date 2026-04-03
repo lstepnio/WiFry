@@ -1,0 +1,61 @@
+# WiFry sudoers rules — allow the wifry user to run network management commands
+# Install to: /etc/sudoers.d/wifry
+
+# Traffic control
+wifry ALL=(ALL) NOPASSWD: /sbin/tc
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/tc
+
+# Network interfaces
+wifry ALL=(ALL) NOPASSWD: /sbin/ip
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/ip
+
+# Firewall
+wifry ALL=(ALL) NOPASSWD: /sbin/iptables
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/iptables
+
+# Packet capture
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tshark
+
+# WiFi AP management
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/hostapd_cli
+
+# WiFi scanning
+wifry ALL=(ALL) NOPASSWD: /sbin/iw
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/iw
+wifry ALL=(ALL) NOPASSWD: /sbin/iwlist
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/iwlist
+
+# Broadcast storm injection
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/hping3
+
+# Service management
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart hostapd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart dhcpcd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl stop hostapd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl stop dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl start hostapd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl start dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl reload dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl is-active hostapd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl is-active dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl reboot
+
+# IP forwarding
+wifry ALL=(ALL) NOPASSWD: /sbin/sysctl -w net.ipv4.ip_forward=1
+
+# VPN / Teleport
+wifry ALL=(ALL) NOPASSWD: /usr/bin/wg-quick
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/openvpn
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/swanctl
+wifry ALL=(ALL) NOPASSWD: /bin/killall openvpn
+
+# CoreDNS
+wifry ALL=(ALL) NOPASSWD: /usr/local/bin/coredns
+
+# File permissions for config writes
+wifry ALL=(ALL) NOPASSWD: /bin/chmod 600 /etc/wireguard/*
+wifry ALL=(ALL) NOPASSWD: /bin/chmod 600 /var/lib/wifry/teleport/*
+wifry ALL=(ALL) NOPASSWD: /bin/cp * /etc/swanctl/conf.d/*
+wifry ALL=(ALL) NOPASSWD: /bin/rm -f /etc/swanctl/conf.d/wifry-*
+wifry ALL=(ALL) NOPASSWD: /bin/rm -f /etc/dnsmasq.d/wifry-*

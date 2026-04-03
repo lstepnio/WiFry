@@ -1,0 +1,12 @@
+{
+  "name": "Average WiFi",
+  "description": "Normal home WiFi",
+  "builtin": true,
+  "category": "network",
+  "tags": ["wifi", "home"],
+  "config": {
+    "delay": { "ms": 15, "jitter_ms": 5, "correlation_pct": 25 },
+    "loss": { "pct": 0.1, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

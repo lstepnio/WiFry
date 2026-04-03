@@ -1,0 +1,12 @@
+{
+  "name": "Transatlantic",
+  "description": "US to Europe",
+  "builtin": true,
+  "category": "network",
+  "tags": ["wan", "cross-region"],
+  "config": {
+    "delay": { "ms": 80, "jitter_ms": 10, "correlation_pct": 25 },
+    "loss": { "pct": 0.03 }
+  },
+  "wifi_config": null
+}

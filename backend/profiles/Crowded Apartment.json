@@ -1,0 +1,21 @@
+{
+  "name": "Crowded Apartment",
+  "description": "Simulates dense apartment WiFi with channel interference, congestion, and broadcast noise",
+  "builtin": true,
+  "category": "combined",
+  "tags": ["wifi", "interference", "congested", "real-world"],
+  "config": {
+    "delay": { "ms": 20, "jitter_ms": 30, "correlation_pct": 40 },
+    "loss": { "pct": 0.5, "correlation_pct": 30 }
+  },
+  "wifi_config": {
+    "channel_interference": { "enabled": true, "beacon_interval_ms": 300, "rts_threshold": 500 },
+    "broadcast_storm": { "enabled": true, "packets_per_sec": 50, "packet_size_bytes": 256 },
+    "tx_power": { "enabled": false, "power_dbm": 20 },
+    "rate_limit": { "enabled": false, "legacy_rate_mbps": 54, "ht_mcs": -1, "vht_mcs": -1 },
+    "band_switch": { "enabled": false, "target_band": "2.4GHz", "target_channel": 0 },
+    "deauth": { "enabled": false, "target_mac": "", "reason_code": 3 },
+    "dhcp_disruption": { "enabled": false, "mode": "delay", "delay_secs": 30 },
+    "periodic_disconnect": { "enabled": false, "interval_secs": 300, "disconnect_duration_secs": 5, "target_mac": "" }
+  }
+}

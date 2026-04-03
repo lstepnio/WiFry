@@ -1,0 +1,12 @@
+{
+  "name": "Satellite",
+  "description": "Satellite internet",
+  "builtin": true,
+  "category": "network",
+  "tags": ["satellite", "high-latency"],
+  "config": {
+    "delay": { "ms": 600, "jitter_ms": 50, "correlation_pct": 25 },
+    "loss": { "pct": 0.5, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

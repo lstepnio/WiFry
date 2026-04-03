@@ -1,0 +1,85 @@
+name: Build WiFry RPi Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g., 1.0.0)'
+        required: false
+        default: ''
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(date +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Write version file
+        run: echo "${{ steps.version.outputs.version }}" > VERSION
+
+      - name: Build RPi image
+        run: |
+          cd image-build
+          ./build-image.sh ${{ steps.version.outputs.version }}
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifry-${{ steps.version.outputs.version }}-rpi-arm64
+          path: image-build/output/*
+          retention-days: 30
+
+      - name: Create release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            image-build/output/*.img.xz
+            image-build/output/*.sha256
+          body: |
+            ## WiFry - IP Video Edition ${{ steps.version.outputs.version }}
+
+            ### Flash Instructions
+            1. Download `wifry-${{ steps.version.outputs.version }}-rpi-arm64.img.xz`
+            2. Flash to SD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (choose "Use custom")
+            3. Insert SD card into RPi 4B+ or 5, connect Ethernet, boot
+            4. Connect to WiFi SSID `WiFry` (password: `wifry1234`)
+            5. Open http://192.168.4.1:3000
+
+            ### Default Credentials
+            - **WiFi**: SSID `WiFry`, password `wifry1234`
+            - **SSH**: user `pi`, password `wifry`
+            - **Fallback IP**: `169.254.42.1` (direct Ethernet)
+
+            ### SHA256 Checksum
+            ```
+            $(cat image-build/output/*.sha256)
+            ```

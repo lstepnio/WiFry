@@ -1,0 +1,21 @@
+{
+  "name": "WiFi Edge Coverage",
+  "description": "Simulates device at the edge of WiFi range with weak signal and occasional drops",
+  "builtin": true,
+  "category": "combined",
+  "tags": ["wifi", "coverage", "edge", "signal"],
+  "config": {
+    "delay": { "ms": 25, "jitter_ms": 15, "correlation_pct": 30 },
+    "loss": { "pct": 2, "correlation_pct": 50 }
+  },
+  "wifi_config": {
+    "tx_power": { "enabled": true, "power_dbm": 5 },
+    "rate_limit": { "enabled": true, "legacy_rate_mbps": 12, "ht_mcs": 3, "vht_mcs": -1 },
+    "channel_interference": { "enabled": false, "beacon_interval_ms": 100, "rts_threshold": 2347 },
+    "band_switch": { "enabled": false, "target_band": "2.4GHz", "target_channel": 0 },
+    "deauth": { "enabled": false, "target_mac": "", "reason_code": 3 },
+    "dhcp_disruption": { "enabled": false, "mode": "delay", "delay_secs": 30 },
+    "broadcast_storm": { "enabled": false, "packets_per_sec": 100, "packet_size_bytes": 512 },
+    "periodic_disconnect": { "enabled": false, "interval_secs": 300, "disconnect_duration_secs": 5, "target_mac": "" }
+  }
+}

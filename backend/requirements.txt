@@ -1,0 +1,14 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0
+pydantic-settings>=2.0
+websockets>=13.0
+anthropic>=0.40.0
+openai>=1.50.0
+aiosqlite>=0.20.0
+mitmproxy>=10.0.0
+
+# dev
+pytest>=8.0
+pytest-asyncio>=0.24.0
+httpx>=0.27.0

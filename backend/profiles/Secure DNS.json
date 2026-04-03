@@ -1,0 +1,27 @@
+{
+  "name": "Secure DNS",
+  "description": "DNS over HTTPS (DoH) via Cloudflare — tests encrypted DNS resolution path",
+  "builtin": true,
+  "category": "dns",
+  "tags": ["dns", "doh", "encrypted", "secure"],
+  "config": {},
+  "wifi_config": null,
+  "dns_config": {
+    "enabled": true,
+    "listen_port": 5053,
+    "log_queries": true,
+    "upstream": {
+      "provider": "cloudflare",
+      "custom_servers": [],
+      "protocol": "doh"
+    },
+    "impairments": {
+      "delay_ms": 0,
+      "failure_rate_pct": 0,
+      "nxdomain_domains": [],
+      "servfail_rate_pct": 0,
+      "ttl_override": 0
+    },
+    "overrides": []
+  }
+}

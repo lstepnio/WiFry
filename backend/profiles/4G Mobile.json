@@ -1,0 +1,12 @@
+{
+  "name": "4G Mobile",
+  "description": "Typical 4G connection",
+  "builtin": true,
+  "category": "network",
+  "tags": ["mobile", "cellular"],
+  "config": {
+    "delay": { "ms": 50, "jitter_ms": 20, "correlation_pct": 25 },
+    "loss": { "pct": 0.5, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

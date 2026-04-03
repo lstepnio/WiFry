@@ -1,0 +1,12 @@
+{
+  "name": "3G Mobile",
+  "description": "Typical 3G connection",
+  "builtin": true,
+  "category": "network",
+  "tags": ["mobile", "cellular", "legacy"],
+  "config": {
+    "delay": { "ms": 150, "jitter_ms": 40, "correlation_pct": 25 },
+    "loss": { "pct": 1.5, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

@@ -1,0 +1,29 @@
+[Unit]
+Description=WiFry Backend API Server
+After=network.target hostapd.service dnsmasq.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=wifry
+Group=wifry
+WorkingDirectory=/opt/wifry/backend
+ExecStart=/opt/wifry/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=5
+
+# Environment
+Environment=WIFRY_DATA_DIR=/var/lib/wifry
+Environment=WIFRY_PROFILES_DIR=/opt/wifry/backend/profiles
+Environment=WIFRY_CAPTURES_DIR=/var/lib/wifry/captures
+
+# Allow tc and hostapd commands via sudo
+AmbientCapabilities=CAP_NET_ADMIN
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wifry-backend
+
+[Install]
+WantedBy=multi-user.target

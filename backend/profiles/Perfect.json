@@ -1,0 +1,9 @@
+{
+  "name": "Perfect",
+  "description": "No impairment (passthrough)",
+  "builtin": true,
+  "category": "network",
+  "tags": ["baseline", "passthrough"],
+  "config": {},
+  "wifi_config": null
+}

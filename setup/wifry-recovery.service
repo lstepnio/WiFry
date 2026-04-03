@@ -1,0 +1,18 @@
+[Unit]
+Description=WiFry Recovery Console (tty2)
+After=multi-user.target
+ConditionPathExists=/opt/wifry/setup/wifry-recovery.sh
+
+[Service]
+Type=idle
+ExecStart=/opt/wifry/setup/wifry-recovery.sh
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty2
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

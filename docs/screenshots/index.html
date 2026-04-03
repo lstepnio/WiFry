@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WiFry - IP Video Edition — UI Screenshots</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e5e7eb; }
+  header { background: #1f2937; padding: 2rem; text-align: center; border-bottom: 2px solid #3b82f6; }
+  h1 { color: #60a5fa; font-size: 2rem; margin-bottom: 0.5rem; }
+  header p { color: #9ca3af; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+  .nav { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 2rem; justify-content: center; }
+  .nav a { padding: 0.5rem 1rem; background: #374151; color: #d1d5db; border-radius: 8px; text-decoration: none; font-size: 0.9rem; }
+  .nav a:hover { background: #4b5563; }
+  .section { margin-bottom: 3rem; }
+  .section h2 { color: #93c5fd; font-size: 1.3rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid #374151; }
+  .section p { color: #9ca3af; font-size: 0.85rem; margin-bottom: 1rem; }
+  .section img { width: 100%; border-radius: 8px; border: 1px solid #374151; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+  footer { text-align: center; padding: 2rem; color: #6b7280; font-size: 0.8rem; border-top: 1px solid #374151; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WiFry - IP Video Edition</h1>
+  <p>Raspberry Pi Network Impairment Simulator for IP Video Testing</p>
+</header>
+<div class="container">
+  <nav class="nav">
+    <a href="#sessions">Sessions</a>
+    <a href="#impairments">Impairments</a>
+    <a href="#adb">ADB</a>
+    <a href="#captures">Captures</a>
+    <a href="#streams">Streams</a>
+    <a href="#sharing">Sharing</a>
+    <a href="#settings">Settings</a>
+  </nav>
+
+  <div class="section" id="sessions">
+    <h2>Sessions</h2>
+    <p>Create test sessions to correlate all artifacts — captures, logcat, screenshots, analyses — into a single identifiable bundle. Every new artifact auto-links to the active session.</p>
+    <img src="sessions.png" alt="Sessions tab">
+  </div>
+
+  <div class="section" id="impairments">
+    <h2>Impairments</h2>
+    <p>Control network conditions with profiles (one-click presets), fine-grained tc netem sliders (delay, jitter, loss, corruption, reorder, bandwidth), WiFi-layer impairments (TX power, band switching, channel hopping, broadcast storms, periodic disconnects), DNS simulation (CoreDNS with failover testing, NXDOMAIN injection, SERVFAIL), and Teleport VPN for geo-shifting.</p>
+    <img src="impairments.png" alt="Impairments tab">
+  </div>
+
+  <div class="section" id="adb">
+    <h2>ADB</h2>
+    <p>Connect to Android-based STBs via network ADB. Remote control with virtual keypad, shell terminal, data collection (screenshots, bugreports saved on RPi), logcat streaming with tag filtering.</p>
+    <img src="adb.png" alt="ADB tab">
+  </div>
+
+  <div class="section" id="captures">
+    <h2>Captures</h2>
+    <p>Packet capture via tshark with BPF pre-filtering. AI-powered analysis (Anthropic Claude or OpenAI) identifies retransmissions, latency issues, and protocol errors. Download pcaps or share via file.io.</p>
+    <img src="captures.png" alt="Captures tab">
+  </div>
+
+  <div class="section" id="streams">
+    <h2>Streams</h2>
+    <p>Real-time HLS/DASH stream monitoring via transparent HTTPS proxy (mitmproxy). Tracks bitrate ladder selection, throughput ratio (TiVo 1.33x threshold), buffer health, segment errors, and rebuffer events.</p>
+    <img src="streams.png" alt="Streams tab">
+  </div>
+
+  <div class="section" id="sharing">
+    <h2>Sharing</h2>
+    <p>Share diagnostics via Cloudflare Quick Tunnel (live access, no account needed) or file.io (one-click zip upload with 15-minute expiry). Collaboration mode enables shadow/co-pilot viewing for remote team members.</p>
+    <img src="sharing.png" alt="Sharing tab">
+  </div>
+
+  <div class="section" id="settings">
+    <h2>Settings</h2>
+    <p>System info, network configuration (WiFi AP + Ethernet with safe boot defaults), WiFi scanner, speed test (iperf3), AI API key management, git updates, and data management with factory reset.</p>
+    <img src="settings.png" alt="Settings tab">
+  </div>
+
+  <div class="section">
+    <h2>Settings — System</h2>
+    <p>RPi model, temperature, memory, uptime, and network interface status.</p>
+    <img src="settings-system.png" alt="Settings System subtab">
+  </div>
+
+  <div class="section">
+    <h2>Settings — Network Config</h2>
+    <p>WiFi hotspot (SSID, password, band, channel) and Ethernet (DHCP/static) configuration with fallback IP for lockout recovery.</p>
+    <img src="settings-network-config.png" alt="Settings Network Config subtab">
+  </div>
+
+  <div class="section">
+    <h2>Settings — Tools</h2>
+    <p>WiFi environment scanner (channel utilization, neighboring networks) and built-in speed test via iperf3.</p>
+    <img src="settings-tools.png" alt="Settings Tools subtab">
+  </div>
+
+  <div class="section">
+    <h2>Settings — App Settings</h2>
+    <p>AI provider configuration, git repo URL for updates, web password, and data management with per-category delete and factory reset.</p>
+    <img src="settings-app-settings.png" alt="Settings App Settings subtab">
+  </div>
+</div>
+<footer>
+  WiFry - IP Video Edition &mdash; Generated automatically
+</footer>
+</body>
+</html>

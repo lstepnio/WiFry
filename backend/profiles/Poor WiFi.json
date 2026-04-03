@@ -1,0 +1,12 @@
+{
+  "name": "Poor WiFi",
+  "description": "Congested WiFi",
+  "builtin": true,
+  "category": "network",
+  "tags": ["wifi", "congested"],
+  "config": {
+    "delay": { "ms": 40, "jitter_ms": 15, "correlation_pct": 25 },
+    "loss": { "pct": 1, "correlation_pct": 25 }
+  },
+  "wifi_config": null
+}

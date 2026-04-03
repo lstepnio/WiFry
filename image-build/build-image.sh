@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+#
+# WiFry - IP Video Edition
+# Custom RPi Image Builder
+#
+# Builds a flashable .img.xz file with WiFry pre-installed.
+# Based on pi-gen (the official Raspberry Pi OS image builder).
+#
+# Prerequisites (build machine — Linux x86_64 or ARM64):
+#   - Docker (recommended) or native build deps
+#   - ~10GB free disk space
+#   - Internet access
+#
+# Usage:
+#   ./build-image.sh [version]
+#
+# Output:
+#   image-build/output/wifry-<version>-rpi-arm64.img.xz
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+VERSION="${1:-$(date +%Y%m%d)}"
+OUTPUT_DIR="$SCRIPT_DIR/output"
+PIGEN_DIR="$SCRIPT_DIR/pi-gen"
+WIFRY_STAGE="$PIGEN_DIR/stage-wifry"
+
+echo "╔══════════════════════════════════════════╗"
+echo "║  WiFry Image Builder v${VERSION}             ║"
+echo "╚══════════════════════════════════════════╝"
+echo ""
+
+# ─── Step 1: Clone pi-gen ────────────────────────────────────────────
+
+if [[ ! -d "$PIGEN_DIR" ]]; then
+    echo "Cloning pi-gen..."
+    git clone --depth 1 https://github.com/RPi-Distro/pi-gen.git "$PIGEN_DIR"
+else
+    echo "pi-gen already cloned."
+fi
+
+# ─── Step 2: Configure pi-gen ────────────────────────────────────────
+
+echo "Configuring pi-gen..."
+
+cat > "$PIGEN_DIR/config" <<EOF
+IMG_NAME=wifry-${VERSION}
+RELEASE=bookworm
+TARGET_HOSTNAME=wifry
+FIRST_USER_NAME=pi
+FIRST_USER_PASS=wifry
+ENABLE_SSH=1
+LOCALE_DEFAULT=en_US.UTF-8
+KEYBOARD_KEYMAP=us
+KEYBOARD_LAYOUT="English (US)"
+TIMEZONE_DEFAULT=America/Denver
+STAGE_LIST="stage0 stage1 stage2 stage-wifry"
+EOF
+
+# Skip stages 3-5 (desktop, full desktop, etc.) — we want Lite + WiFry
+touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
+touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
+
+# ─── Step 3: Create WiFry custom stage ───────────────────────────────
+
+echo "Creating WiFry stage..."
+
+rm -rf "$WIFRY_STAGE"
+mkdir -p "$WIFRY_STAGE/00-wifry-deps/files"
+mkdir -p "$WIFRY_STAGE/01-wifry-install/files"
+
+# ── Substage 00: Install system dependencies ──
+
+cat > "$WIFRY_STAGE/00-wifry-deps/00-packages" <<'PACKAGES'
+python3
+python3-venv
+python3-pip
+hostapd
+dnsmasq
+bridge-utils
+iproute2
+iptables
+iptables-persistent
+tshark
+wireless-tools
+iw
+nodejs
+npm
+git
+ffmpeg
+v4l-utils
+hping3
+iperf3
+wireguard-tools
+openvpn
+strongswan
+strongswan-swanctl
+curl
+jq
+rsync
+PACKAGES
+
+cat > "$WIFRY_STAGE/00-wifry-deps/01-run.sh" <<'DEPS_SCRIPT'
+#!/bin/bash -e
+
+# Install binary dependencies
+ARCH=$(dpkg --print-architecture)
+
+# Cloudflare Tunnel
+if ! command -v cloudflared &>/dev/null; then
+    curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" -o /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+fi
+
+# CoreDNS
+if ! command -v coredns &>/dev/null; then
+    COREDNS_VER="1.11.3"
+    curl -sL "https://github.com/coredns/coredns/releases/download/v${COREDNS_VER}/coredns_${COREDNS_VER}_linux_${ARCH}.tgz" | tar xz -C /usr/local/bin/
+    chmod +x /usr/local/bin/coredns
+fi
+
+# Ookla Speedtest CLI
+if ! command -v speedtest &>/dev/null; then
+    curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash
+    apt-get install -y speedtest || true
+fi
+DEPS_SCRIPT
+chmod +x "$WIFRY_STAGE/00-wifry-deps/01-run.sh"
+
+# ── Substage 01: Install WiFry application ──
+
+# Build frontend on the build machine first
+echo "Building frontend for image..."
+cd "$PROJECT_DIR/frontend"
+if command -v npm &>/dev/null; then
+    npm run build 2>/dev/null || echo "Frontend build skipped (run npm install first)"
+fi
+cd "$SCRIPT_DIR"
+
+# Copy WiFry source into the stage
+rsync -a --exclude '.venv' --exclude 'node_modules' --exclude '__pycache__' \
+    --exclude '.git' --exclude '.pytest_cache' --exclude 'image-build' \
+    "$PROJECT_DIR/" "$WIFRY_STAGE/01-wifry-install/files/wifry/"
+
+cat > "$WIFRY_STAGE/01-wifry-install/01-run.sh" <<'INSTALL_SCRIPT'
+#!/bin/bash -e
+
+INSTALL_DIR="/opt/wifry"
+DATA_DIR="/var/lib/wifry"
+WIFRY_USER="wifry"
+
+# Create user
+useradd --system --create-home --shell /usr/sbin/nologin "$WIFRY_USER" || true
+usermod -aG netdev "$WIFRY_USER" || true
+
+# Deploy code
+mkdir -p "$INSTALL_DIR"
+cp -r /tmp/files/wifry/* "$INSTALL_DIR/"
+chown -R "$WIFRY_USER:$WIFRY_USER" "$INSTALL_DIR"
+
+# Create data directories
+for dir in captures reports sessions segments bundles annotations \
+           adb-files hdmi-captures coredns teleport network-profiles; do
+    mkdir -p "$DATA_DIR/$dir"
+done
+mkdir -p /var/log/wifry
+chown -R "$WIFRY_USER:$WIFRY_USER" "$DATA_DIR" /var/log/wifry
+
+# Python venv
+sudo -u "$WIFRY_USER" python3 -m venv "$INSTALL_DIR/backend/.venv"
+sudo -u "$WIFRY_USER" "$INSTALL_DIR/backend/.venv/bin/pip" install --upgrade pip -q
+sudo -u "$WIFRY_USER" "$INSTALL_DIR/backend/.venv/bin/pip" install -r "$INSTALL_DIR/backend/requirements.txt" -q
+
+# Sudoers
+install -m 0440 "$INSTALL_DIR/setup/wifry-sudoers" /etc/sudoers.d/wifry
+
+# Login banner
+install -m 0644 "$INSTALL_DIR/setup/wifry-motd.sh" /etc/profile.d/wifry-motd.sh
+
+# Systemd services
+cp "$INSTALL_DIR/setup/wifry-backend.service" /etc/systemd/system/
+cp "$INSTALL_DIR/setup/wifry-frontend.service" /etc/systemd/system/
+cp "$INSTALL_DIR/setup/wifry-recovery.service" /etc/systemd/system/
+
+systemctl enable wifry-backend.service
+systemctl enable wifry-frontend.service
+systemctl enable wifry-recovery.service
+systemctl enable hostapd.service
+systemctl enable dnsmasq.service
+
+# Unmask hostapd (masked by default in RPi OS)
+systemctl unmask hostapd
+
+# hostapd config
+WLAN_IFACE="wlan0"
+cat > /etc/hostapd/hostapd.conf <<HOSTAPD
+interface=${WLAN_IFACE}
+driver=nl80211
+ssid=WiFry
+utf8_ssid=1
+hw_mode=g
+channel=6
+ieee80211n=1
+ieee80211ax=1
+wpa=2
+wpa_passphrase=wifry1234
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+country_code=US
+ieee80211d=1
+wmm_enabled=1
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+HOSTAPD
+
+echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > /etc/default/hostapd
+
+# dnsmasq config
+cat > /etc/dnsmasq.d/wifry.conf <<DNSMASQ
+interface=${WLAN_IFACE}
+bind-interfaces
+dhcp-range=192.168.4.10,192.168.4.200,255.255.255.0,24h
+dhcp-option=6,192.168.4.1
+server=8.8.8.8
+no-resolv
+log-queries
+log-dhcp
+log-facility=/var/log/wifry-dnsmasq.log
+DNSMASQ
+
+# Static IP + fallback
+cat >> /etc/dhcpcd.conf <<DHCPCD
+
+# WiFry AP config
+interface ${WLAN_IFACE}
+    static ip_address=192.168.4.1/24
+    nohook wpa_supplicant
+
+# WiFry fallback — always reachable for recovery
+interface eth0
+    static ip_address=169.254.42.1/16
+    nolink
+DHCPCD
+
+# IP forwarding
+echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+
+# NAT rules (applied on boot via iptables-persistent)
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+netfilter-persistent save
+
+# Write version file
+echo "wifry-$(date +%Y%m%d)" > /opt/wifry/VERSION
+
+INSTALL_SCRIPT
+chmod +x "$WIFRY_STAGE/01-wifry-install/01-run.sh"
+
+# Mark this as the final image stage
+touch "$WIFRY_STAGE/EXPORT_IMAGE"
+
+# ─── Step 4: Build the image ─────────────────────────────────────────
+
+echo ""
+echo "Building RPi image (this takes 20-40 minutes)..."
+echo ""
+
+cd "$PIGEN_DIR"
+
+if command -v docker &>/dev/null; then
+    echo "Using Docker build method..."
+    ./build-docker.sh
+else
+    echo "Using native build method..."
+    echo "Note: Requires quemu-user-static and other deps. See pi-gen README."
+    ./build.sh
+fi
+
+# ─── Step 5: Collect output ──────────────────────────────────────────
+
+mkdir -p "$OUTPUT_DIR"
+
+# Find the built image
+IMAGE=$(find "$PIGEN_DIR/deploy" -name "*.img.xz" -type f | head -1)
+if [[ -n "$IMAGE" ]]; then
+    FINAL_NAME="wifry-${VERSION}-rpi-arm64.img.xz"
+    cp "$IMAGE" "$OUTPUT_DIR/$FINAL_NAME"
+
+    # Generate checksum
+    sha256sum "$OUTPUT_DIR/$FINAL_NAME" > "$OUTPUT_DIR/$FINAL_NAME.sha256"
+
+    SIZE=$(du -sh "$OUTPUT_DIR/$FINAL_NAME" | awk '{print $1}')
+
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║  Image Build Complete!                   ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+    echo "  Image: $OUTPUT_DIR/$FINAL_NAME"
+    echo "  Size:  $SIZE"
+    echo "  SHA256: $(cat "$OUTPUT_DIR/$FINAL_NAME.sha256" | awk '{print $1}')"
+    echo ""
+    echo "  Flash to SD card:"
+    echo "    xz -d $FINAL_NAME"
+    echo "    sudo dd if=wifry-${VERSION}-rpi-arm64.img of=/dev/sdX bs=4M status=progress"
+    echo ""
+    echo "  Or use Raspberry Pi Imager:"
+    echo "    Choose 'Use custom' and select $FINAL_NAME"
+    echo ""
+else
+    echo "ERROR: No image found in pi-gen/deploy/"
+    echo "Check pi-gen build logs for errors."
+    exit 1
+fi

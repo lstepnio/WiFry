@@ -1,0 +1,12 @@
+{
+  "name": "Good WiFi",
+  "description": "Typical good home WiFi",
+  "builtin": true,
+  "category": "network",
+  "tags": ["wifi", "baseline", "home"],
+  "config": {
+    "delay": { "ms": 5, "jitter_ms": 2, "correlation_pct": 25 },
+    "loss": { "pct": 0.01 }
+  },
+  "wifi_config": null
+}

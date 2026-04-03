@@ -1,0 +1,23 @@
+# WiFry dnsmasq configuration
+# Auto-generated — do not edit manually.
+
+# Only listen on the AP interface
+interface=${AP_INTERFACE}
+bind-interfaces
+
+# DHCP range for connected clients
+dhcp-range=${DHCP_RANGE_START},${DHCP_RANGE_END},255.255.255.0,24h
+
+# Set the RPi as the DNS server for clients
+dhcp-option=6,${AP_IP}
+
+# Upstream DNS (forwarded to CoreDNS when DNS simulation is active)
+server=${DNS_SERVER}
+
+# Don't read /etc/resolv.conf
+no-resolv
+
+# Logging
+log-queries
+log-dhcp
+log-facility=/var/log/wifry-dnsmasq.log

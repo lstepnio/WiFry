@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+backend/.venv/
+backend/venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# WiFry runtime data (not in repo)
+/data/
+*.pcap
+*.bugreport
+*.log
+
+# pi-gen build artifacts
+image-build/pi-gen/
+image-build/output/
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Screenshots (generated, not tracked)
+docs/screenshots/*.png
+docs/screenshots/*.jpg
+wifry-screenshots.zip
+
+# Claude
+.claude/
