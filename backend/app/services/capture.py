@@ -133,9 +133,11 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
 
         info.stopped_at = datetime.now(timezone.utc).isoformat()
 
-        # Get file size and packet count
+        # Fix ownership — sudo tshark creates files as root
         pcap = Path(info.pcap_path)
         if pcap.exists():
+            await run("chmod", "644", str(pcap), sudo=True, check=False)
+            await run("chown", "wifry:wifry", str(pcap), sudo=True, check=False)
             info.file_size_bytes = pcap.stat().st_size
             count = await _count_packets(info.pcap_path)
             info.packet_count = count
