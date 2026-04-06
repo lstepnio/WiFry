@@ -22,6 +22,7 @@ import DnsPanel from './DnsPanel';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import FeatureFlagsPanel from './FeatureFlagsPanel';
 import HwValidationPanel from './HwValidationPanel';
+import VideoProbe from './VideoProbe';
 
 /*
  * 6 main tabs (fits nav without overflow):
@@ -202,6 +203,7 @@ export default function Dashboard() {
             <div className="space-y-6">
               <ProxySettings />
               <StreamMonitor onSelect={(id) => setSelectedStreamId(id)} />
+              <VideoProbe />
             </div>
           )
         )}
