@@ -251,8 +251,15 @@ if [ ! -f "$MARKER" ]; then
     echo "WiFry first boot: installing Python dependencies..."
     /opt/wifry/backend/.venv/bin/pip install --upgrade pip -q
     /opt/wifry/backend/.venv/bin/pip install -r /opt/wifry/backend/requirements.txt -q
+    # Set up NAT/iptables (can't run under QEMU during image build)
+    echo "WiFry first boot: configuring NAT..."
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+    iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+    netfilter-persistent save || iptables-save > /etc/iptables.rules
+
     touch "$MARKER"
-    echo "WiFry first boot: pip install complete"
+    echo "WiFry first boot: complete"
     systemctl restart wifry-backend
 fi
 PIPBOOT
@@ -353,11 +360,8 @@ DHCPCD
 # IP forwarding
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-# NAT rules (applied on boot via iptables-persistent)
-iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
-iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-netfilter-persistent save
+# NAT rules — can't run iptables under QEMU, defer to first-boot script
+# The first-boot-pip.sh already runs on first boot; add iptables there too
 
 # Write version file
 echo "wifry-$(date +%Y%m%d)" > /opt/wifry/VERSION
