@@ -80,6 +80,37 @@ export default function VideoProbe() {
   const [error, setError] = useState('');
   const [segmentDir, setSegmentDir] = useState('/var/lib/wifry/segments');
   const [discoveredFiles, setDiscoveredFiles] = useState<string[]>([]);
+  const [mode, setMode] = useState<'url' | 'files'>('url');
+  const [streamUrl, setStreamUrl] = useState('');
+  const [maxSegments, setMaxSegments] = useState(5);
+  const [manifestInfo, setManifestInfo] = useState<Record<string, unknown> | null>(null);
+
+  const probeUrl = async () => {
+    if (!streamUrl.trim()) { setError('Enter a URL'); return; }
+    setProbing(true);
+    setError('');
+    setResult(null);
+    setSingleResult(null);
+    setManifestInfo(null);
+    try {
+      const res = await fetch('/api/v1/probe/url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: streamUrl.trim(), max_segments: maxSegments }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setManifestInfo(data.manifest || null);
+      setResult(data as ProbeResult);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Probe failed');
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const discoverSegments = async () => {
     setError('');
@@ -169,65 +200,127 @@ export default function VideoProbe() {
     <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Video Quality Probe</h2>
       <p className="mt-1 text-sm text-gray-500">
-        Analyze media segments with ffprobe for codec info, bitrate, resolution, and keyframe intervals.
+        Analyze HLS/DASH streams or local media segments for codec info, bitrate, resolution, and keyframe intervals.
       </p>
 
-      {/* Segment discovery */}
-      <div className="mt-4 flex items-end gap-3">
-        <div className="flex-1">
-          <label className="mb-1 block text-xs text-gray-500">Segment Directory</label>
+      {/* Mode toggle */}
+      <div className="mt-4 flex gap-2">
+        <button onClick={() => setMode('url')}
+          className={`rounded-lg px-4 py-1.5 text-sm font-medium ${mode === 'url' ? 'bg-blue-600 text-white' : 'border border-gray-600 text-gray-400'}`}>
+          Stream URL
+        </button>
+        <button onClick={() => setMode('files')}
+          className={`rounded-lg px-4 py-1.5 text-sm font-medium ${mode === 'files' ? 'bg-blue-600 text-white' : 'border border-gray-600 text-gray-400'}`}>
+          Local Files
+        </button>
+      </div>
+
+      {mode === 'url' && (
+        <div className="mt-4">
+          <label className="mb-1 block text-xs text-gray-500">HLS / DASH / Media URL</label>
           <input
             type="text"
-            value={segmentDir}
-            onChange={e => setSegmentDir(e.target.value)}
+            value={streamUrl}
+            onChange={e => setStreamUrl(e.target.value)}
+            placeholder="https://example.com/stream.m3u8"
             className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
           />
+          <div className="mt-2 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Max segments:</label>
+              <input type="number" value={maxSegments} onChange={e => setMaxSegments(Number(e.target.value))}
+                min={1} max={20}
+                className="w-16 rounded border border-gray-600 bg-gray-800 px-2 py-1 text-xs text-white" />
+            </div>
+            <button
+              onClick={probeUrl}
+              disabled={probing || !streamUrl.trim()}
+              className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {probing ? 'Fetching & Analyzing...' : 'Analyze Stream'}
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-gray-600">
+            Supports .m3u8 (HLS master/media), .mpd (DASH), or direct .ts/.mp4/.m4s URLs
+          </p>
         </div>
-        <button
-          onClick={discoverSegments}
-          className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-        >
-          Discover Files
-        </button>
-      </div>
+      )}
 
-      {/* File paths */}
-      <div className="mt-3">
-        <label className="mb-1 block text-xs text-gray-500">
-          File Paths (one per line) {discoveredFiles.length > 0 && `\u2014 ${discoveredFiles.length} found`}
-        </label>
-        <textarea
-          value={paths}
-          onChange={e => setPaths(e.target.value)}
-          rows={4}
-          placeholder="/var/lib/wifry/segments/example.ts"
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-        />
-      </div>
+      {mode === 'files' && (
+        <>
+          {/* Segment discovery */}
+          <div className="mt-4 flex items-end gap-3">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs text-gray-500">Segment Directory</label>
+              <input
+                type="text"
+                value={segmentDir}
+                onChange={e => setSegmentDir(e.target.value)}
+                className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+            </div>
+            <button
+              onClick={discoverSegments}
+              className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Discover Files
+            </button>
+          </div>
 
-      {/* Action buttons */}
-      <div className="mt-3 flex gap-3">
-        <button
-          onClick={probeMultiple}
-          disabled={probing || !paths.trim()}
-          className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {probing ? 'Analyzing...' : 'Analyze All'}
-        </button>
-        {paths.trim().split('\n').length === 1 && paths.trim() && (
-          <button
-            onClick={() => probeSingle(paths.trim())}
-            disabled={probing}
-            className="rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400"
-          >
-            Analyze Single
-          </button>
-        )}
-      </div>
+          {/* File paths */}
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-gray-500">
+              File Paths (one per line) {discoveredFiles.length > 0 && `\u2014 ${discoveredFiles.length} found`}
+            </label>
+            <textarea
+              value={paths}
+              onChange={e => setPaths(e.target.value)}
+              rows={4}
+              placeholder="/var/lib/wifry/segments/example.ts"
+              className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+            />
+          </div>
+
+          {/* Action buttons */}
+          <div className="mt-3 flex gap-3">
+            <button
+              onClick={probeMultiple}
+              disabled={probing || !paths.trim()}
+              className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {probing ? 'Analyzing...' : 'Analyze All'}
+            </button>
+            {paths.trim().split('\n').length === 1 && paths.trim() && (
+              <button
+                onClick={() => probeSingle(paths.trim())}
+                disabled={probing}
+                className="rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400"
+              >
+                Analyze Single
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {error && (
         <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">
           {error}
+        </div>
+      )}
+
+      {/* Manifest info */}
+      {manifestInfo && (
+        <div className="mt-4 rounded-lg border border-gray-700 bg-gray-800/50 p-3">
+          <div className="text-xs font-medium text-gray-400">Manifest</div>
+          <div className="mt-1 flex flex-wrap gap-4 text-xs text-gray-500">
+            <span>Type: <span className="text-gray-300">{String(manifestInfo.type || '').toUpperCase()}</span></span>
+            {'variants' in manifestInfo && <span>Variants: <span className="text-gray-300">{String(manifestInfo.variants)}</span></span>}
+            {'segments_total' in manifestInfo && <span>Total segments: <span className="text-gray-300">{String(manifestInfo.segments_total)}</span></span>}
+            {'selected' in manifestInfo && manifestInfo.selected != null && (
+              <span>Selected: <span className="text-gray-300">{String((manifestInfo.selected as Record<string, string>).resolution)} @ {String((manifestInfo.selected as Record<string, string>).bandwidth)} bps</span></span>
+            )}
+          </div>
         </div>
       )}
 
