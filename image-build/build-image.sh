@@ -170,7 +170,10 @@ HOSTAPD
 echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > "$MOUNT_DIR/etc/default/hostapd"
 
 # dnsmasq — enable conf-dir so /etc/dnsmasq.d/*.conf files are loaded
-sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' "$MOUNT_DIR/etc/dnsmasq.conf"
+# (dnsmasq.conf may not exist in base image — created by first-boot apt install)
+if [ -f "$MOUNT_DIR/etc/dnsmasq.conf" ]; then
+    sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' "$MOUNT_DIR/etc/dnsmasq.conf"
+fi
 mkdir -p "$MOUNT_DIR/etc/dnsmasq.d"
 cat > "$MOUNT_DIR/etc/dnsmasq.d/wifry.conf" <<'DNSMASQ'
 interface=wlan0
@@ -311,6 +314,11 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="
     python3-venv hostapd dnsmasq bridge-utils iptables \
     tshark wireless-tools iw ffmpeg v4l-utils \
     hping3 iperf3 wireguard-tools openvpn curl jq
+
+# Enable dnsmasq conf-dir (freshly installed dnsmasq has it commented out)
+if [ -f /etc/dnsmasq.conf ]; then
+    sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' /etc/dnsmasq.conf
+fi
 
 # Install binary dependencies
 ARCH=$(dpkg --print-architecture)
