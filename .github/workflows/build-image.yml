@@ -17,7 +17,7 @@ permissions:
 jobs:
   build-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -34,22 +34,6 @@ jobs:
             echo "version=$(date +%Y%m%d)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Set up QEMU for ARM emulation
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y qemu-user-static binfmt-support
-          sudo update-binfmts --enable
-          # Register all architectures via privileged Docker container
-          docker run --rm --privileged tonistiigi/binfmt --install all
-          # pi-gen checks for 'qemu-arm' but Ubuntu installs it as 'qemu-arm-static'
-          sudo ln -sf /usr/bin/qemu-arm-static /usr/bin/qemu-arm
-          sudo ln -sf /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64
-          # Verify
-          which qemu-arm && echo "qemu-arm: OK" || echo "qemu-arm: MISSING"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -64,10 +48,15 @@ jobs:
       - name: Write version file
         run: echo "${{ steps.version.outputs.version }}" > VERSION
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xz-utils parted e2fsprogs dosfstools rsync
+
       - name: Build RPi image
         run: |
           cd image-build
-          ./build-image.sh ${{ steps.version.outputs.version }}
+          sudo bash build-image.sh ${{ steps.version.outputs.version }}
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -88,16 +77,17 @@ jobs:
             ### Flash Instructions
             1. Download `wifry-${{ steps.version.outputs.version }}-rpi-arm64.img.xz`
             2. Flash to SD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (choose "Use custom")
-            3. Insert SD card into RPi 4B+ or 5, connect Ethernet, boot
-            4. Connect to WiFi SSID `WiFry` (password: `wifry1234`)
-            5. Open http://192.168.4.1:3000
+            3. Insert SD card into RPi 4B+ or 5, **connect Ethernet**, boot
+            4. Wait ~5 minutes for first-boot setup (installs packages)
+            5. Connect to WiFi SSID `WiFry` (password: `wifry1234`)
+            6. Open http://192.168.4.1:3000
 
             ### Default Credentials
             - **WiFi**: SSID `WiFry`, password `wifry1234`
             - **SSH**: user `pi`, password `wifry`
-            - **Fallback IP**: `169.254.42.1` (direct Ethernet)
+            - **Fallback IP**: `169.254.42.1` (direct Ethernet connection)
 
-            ### SHA256 Checksum
-            ```
-            $(cat image-build/output/*.sha256)
-            ```
+            ### First Boot Requirements
+            - Ethernet must be connected (downloads ~200MB of packages)
+            - Takes ~5 minutes, then WiFi AP starts automatically
+            - Subsequent boots are instant (no internet needed)
