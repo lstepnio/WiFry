@@ -106,9 +106,14 @@ async def write_and_restart_hostapd(**kwargs: str | int) -> None:
 
     # Set regulatory domain before restart (5GHz needs this applied first)
     country = kwargs.get("country_code", "US")
+    await run("rfkill", "unblock", "wlan", sudo=True, check=False)
     await run("iw", "reg", "set", country, sudo=True, check=False)
 
-    result = await run("systemctl", "restart", "hostapd", sudo=True, check=False)
+    # systemd override also runs rfkill+iw+sleep, but seed it here too
+    import asyncio
+    await asyncio.sleep(1)
+
+    result = await run("systemctl", "restart", "hostapd", sudo=True, check=False, timeout=15)
     if result.success:
         logger.info("Restarted hostapd")
     else:

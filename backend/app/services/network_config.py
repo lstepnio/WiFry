@@ -63,18 +63,21 @@ def is_first_boot() -> bool:
 async def apply_config(config: FullNetworkConfig) -> FullNetworkConfig:
     """Apply and save a new network configuration.
 
-    This marks first_boot=False so the banner won't show again.
+    Config is saved only after successful application to prevent
+    persisting a broken config (e.g., 5GHz that hostapd can't start).
     """
     global _current_config
 
     config.first_boot = False
-    _current_config = config
-    _save_config(config)
 
     if not settings.mock_mode:
         await _apply_fallback(config.fallback)
         await _apply_wifi_ap(config.wifi_ap)
         await _apply_ethernet(config.ethernet)
+
+    # Save only after successful apply
+    _current_config = config
+    _save_config(config)
 
     logger.info("Network config applied (SSID=%s, eth=%s)", config.wifi_ap.ssid, config.ethernet.mode)
     return config

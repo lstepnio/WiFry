@@ -73,7 +73,7 @@ class WifiCapabilities:
             "band_5ghz": {
                 "supported": self.band_5ghz and len(self.supported_channels_5g) > 0,
                 "reason": "" if (self.band_5ghz and len(self.supported_channels_5g) > 0)
-                    else "5GHz not reliably supported on built-in WiFi in AP mode (use USB adapter)",
+                    else "WiFi hardware does not support 5GHz",
             },
             "deauth": {
                 "supported": self.ap_mode,
