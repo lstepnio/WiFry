@@ -345,6 +345,18 @@ chmod +x /etc/network/if-pre-up.d/iptables
 touch "$MARKER"
 echo "WiFry first boot complete at $(date)"
 
+# Unblock WiFi radio (RPi OS ships with it soft-blocked)
+rfkill unblock wlan 2>/dev/null || true
+
+# Disable wpa_supplicant (conflicts with hostapd AP mode)
+systemctl stop wpa_supplicant 2>/dev/null || true
+systemctl disable wpa_supplicant 2>/dev/null || true
+
+# Set static IP on wlan0 for AP
+ip addr flush dev wlan0 2>/dev/null || true
+ip addr add 192.168.4.1/24 dev wlan0 2>/dev/null || true
+ip link set wlan0 up 2>/dev/null || true
+
 # Restart services
 systemctl restart hostapd dnsmasq wifry-backend wifry-frontend
 FIRSTBOOT
