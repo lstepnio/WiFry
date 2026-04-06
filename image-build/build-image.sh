@@ -24,7 +24,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VERSION="${1:-$(date +%Y%m%d)}"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 PIGEN_DIR="$SCRIPT_DIR/pi-gen"
-WIFRY_STAGE="$PIGEN_DIR/stage-wifry"
+# Put WiFry install inside stage2 as extra substages (not a separate stage)
+# This avoids rootfs chaining issues with custom stage names
+WIFRY_STAGE="$PIGEN_DIR/stage2"
 
 echo "╔══════════════════════════════════════════╗"
 echo "║  WiFry Image Builder v${VERSION}             ║"
@@ -55,7 +57,7 @@ LOCALE_DEFAULT=en_US.UTF-8
 KEYBOARD_KEYMAP=us
 KEYBOARD_LAYOUT="English (US)"
 TIMEZONE_DEFAULT=America/Denver
-STAGE_LIST="stage0 stage1 stage2 stage-wifry"
+STAGE_LIST="stage0 stage1 stage2"
 EOF
 
 # Skip stages 3-5 (desktop, full desktop, etc.) — we want Lite + WiFry
@@ -119,13 +121,13 @@ fi
 
 echo "Creating WiFry stage..."
 
-rm -rf "$WIFRY_STAGE"
-mkdir -p "$WIFRY_STAGE/00-wifry-deps/files"
-mkdir -p "$WIFRY_STAGE/01-wifry-install/files"
+# Add WiFry substages to stage2 (numbered high so they run last)
+mkdir -p "$WIFRY_STAGE/10-wifry-deps/files"
+mkdir -p "$WIFRY_STAGE/11-wifry-install/files"
 
 # ── Substage 00: Install system dependencies ──
 
-cat > "$WIFRY_STAGE/00-wifry-deps/00-packages" <<'PACKAGES'
+cat > "$WIFRY_STAGE/10-wifry-deps/00-packages" <<'PACKAGES'
 python3
 python3-venv
 python3-pip
@@ -154,7 +156,7 @@ jq
 rsync
 PACKAGES
 
-cat > "$WIFRY_STAGE/00-wifry-deps/01-run.sh" <<'DEPS_SCRIPT'
+cat > "$WIFRY_STAGE/10-wifry-deps/01-run.sh" <<'DEPS_SCRIPT'
 #!/bin/bash -e
 
 # Install binary dependencies
@@ -179,7 +181,7 @@ if ! command -v speedtest &>/dev/null; then
     apt-get install -y speedtest || true
 fi
 DEPS_SCRIPT
-chmod +x "$WIFRY_STAGE/00-wifry-deps/01-run.sh"
+chmod +x "$WIFRY_STAGE/10-wifry-deps/01-run.sh"
 
 # ── Substage 01: Install WiFry application ──
 
@@ -194,9 +196,9 @@ cd "$SCRIPT_DIR"
 # Copy WiFry source into the stage
 rsync -a --exclude '.venv' --exclude 'node_modules' --exclude '__pycache__' \
     --exclude '.git' --exclude '.pytest_cache' --exclude 'image-build' \
-    "$PROJECT_DIR/" "$WIFRY_STAGE/01-wifry-install/files/wifry/"
+    "$PROJECT_DIR/" "$WIFRY_STAGE/11-wifry-install/files/wifry/"
 
-cat > "$WIFRY_STAGE/01-wifry-install/01-run.sh" <<'INSTALL_SCRIPT'
+cat > "$WIFRY_STAGE/11-wifry-install/01-run-chroot.sh" <<'INSTALL_SCRIPT'
 #!/bin/bash -e
 
 INSTALL_DIR="/opt/wifry"
@@ -310,10 +312,9 @@ netfilter-persistent save
 echo "wifry-$(date +%Y%m%d)" > /opt/wifry/VERSION
 
 INSTALL_SCRIPT
-chmod +x "$WIFRY_STAGE/01-wifry-install/01-run.sh"
+chmod +x "$WIFRY_STAGE/11-wifry-install/01-run-chroot.sh"
 
-# Mark this as the final image stage
-touch "$WIFRY_STAGE/EXPORT_IMAGE"
+# stage2 already has EXPORT_IMAGE — no need to add it
 
 # ─── Step 4: Build the image ─────────────────────────────────────────
 
