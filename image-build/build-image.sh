@@ -228,6 +228,15 @@ ln -sf /etc/systemd/system/wifry-recovery.service "$WANTS/wifry-recovery.service
 rm -f "$MOUNT_DIR/etc/systemd/system/hostapd.service"  # Remove mask if exists
 ln -sf /lib/systemd/system/hostapd.service "$WANTS/hostapd.service" 2>/dev/null || true
 
+# hostapd needs rfkill unblock + regulatory domain set before starting
+mkdir -p "$MOUNT_DIR/etc/systemd/system/hostapd.service.d"
+cat > "$MOUNT_DIR/etc/systemd/system/hostapd.service.d/wifry.conf" <<'HAPD_OVERRIDE'
+[Service]
+ExecStartPre=/usr/sbin/rfkill unblock wlan
+ExecStartPre=/usr/sbin/iw reg set US
+ExecStartPre=/bin/sleep 2
+HAPD_OVERRIDE
+
 # Enable dnsmasq
 ln -sf /lib/systemd/system/dnsmasq.service "$WANTS/dnsmasq.service" 2>/dev/null || true
 
