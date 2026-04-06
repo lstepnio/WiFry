@@ -19,6 +19,9 @@ wifry ALL=(ALL) NOPASSWD: /usr/bin/tshark
 # WiFi AP management
 wifry ALL=(ALL) NOPASSWD: /usr/sbin/hostapd_cli
 
+# WiFi radio control
+wifry ALL=(ALL) NOPASSWD: /usr/sbin/rfkill
+
 # WiFi scanning
 wifry ALL=(ALL) NOPASSWD: /sbin/iw
 wifry ALL=(ALL) NOPASSWD: /usr/sbin/iw
