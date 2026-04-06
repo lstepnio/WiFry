@@ -169,7 +169,8 @@ HOSTAPD
 
 echo 'DAEMON_CONF="/etc/hostapd/hostapd.conf"' > "$MOUNT_DIR/etc/default/hostapd"
 
-# dnsmasq
+# dnsmasq — enable conf-dir so /etc/dnsmasq.d/*.conf files are loaded
+sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' "$MOUNT_DIR/etc/dnsmasq.conf"
 mkdir -p "$MOUNT_DIR/etc/dnsmasq.d"
 cat > "$MOUNT_DIR/etc/dnsmasq.d/wifry.conf" <<'DNSMASQ'
 interface=wlan0
