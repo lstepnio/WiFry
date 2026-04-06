@@ -198,6 +198,24 @@ rsync -a --exclude '.venv' --exclude 'node_modules' --exclude '__pycache__' \
     --exclude '.git' --exclude '.pytest_cache' --exclude 'image-build' \
     "$PROJECT_DIR/" "$WIFRY_STAGE/11-wifry-install/files/wifry/"
 
+# Host-side script: copy files into rootfs before chroot runs
+cat > "$WIFRY_STAGE/11-wifry-install/00-run.sh" <<'COPY_SCRIPT'
+#!/bin/bash -e
+# Runs on HOST — copy WiFry files into the rootfs
+INSTALL_DIR="${ROOTFS_DIR}/opt/wifry"
+mkdir -p "$INSTALL_DIR"
+if [[ -d "${STAGE_WORK_DIR}/11-wifry-install/files/wifry" ]]; then
+    cp -r "${STAGE_WORK_DIR}/11-wifry-install/files/wifry/"* "$INSTALL_DIR/" || true
+fi
+# Fallback: check pi-gen's files directory
+if [[ ! -f "$INSTALL_DIR/VERSION" ]] && [[ -d "files/wifry" ]]; then
+    cp -r files/wifry/* "$INSTALL_DIR/" || true
+fi
+echo "WiFry files copied to $INSTALL_DIR"
+ls "$INSTALL_DIR/" || echo "WARNING: install dir empty"
+COPY_SCRIPT
+chmod +x "$WIFRY_STAGE/11-wifry-install/00-run.sh"
+
 cat > "$WIFRY_STAGE/11-wifry-install/01-run-chroot.sh" <<'INSTALL_SCRIPT'
 #!/bin/bash -e
 
@@ -209,10 +227,8 @@ WIFRY_USER="wifry"
 useradd --system --create-home --shell /usr/sbin/nologin "$WIFRY_USER" || true
 usermod -aG netdev "$WIFRY_USER" || true
 
-# Deploy code
-mkdir -p "$INSTALL_DIR"
-cp -r /tmp/files/wifry/* "$INSTALL_DIR/"
-chown -R "$WIFRY_USER:$WIFRY_USER" "$INSTALL_DIR"
+# Code already copied by host-side 00-run.sh
+chown -R "$WIFRY_USER:$WIFRY_USER" "$INSTALL_DIR" || true
 
 # Create data directories
 for dir in captures reports sessions segments bundles annotations \
