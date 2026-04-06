@@ -392,10 +392,11 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Find the built image
-IMAGE=$(find "$PIGEN_DIR/deploy" -name "*.img.xz" -type f | head -1)
+# Find the built image (pi-gen may produce .img.xz or .zip)
+IMAGE=$(find "$PIGEN_DIR/deploy" -name "*.img.xz" -o -name "image_*.zip" -type f 2>/dev/null | head -1)
 if [[ -n "$IMAGE" ]]; then
-    FINAL_NAME="wifry-${VERSION}-rpi-arm64.img.xz"
+    EXT="${IMAGE##*.}"
+    FINAL_NAME="wifry-${VERSION}-rpi-arm64.${EXT}"
     cp "$IMAGE" "$OUTPUT_DIR/$FINAL_NAME"
 
     # Generate checksum

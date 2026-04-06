@@ -78,8 +78,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            image-build/output/*.img.xz
-            image-build/output/*.sha256
+            image-build/output/*
           body: |
             ## WiFry - IP Video Edition ${{ steps.version.outputs.version }}
 
