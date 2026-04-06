@@ -255,6 +255,34 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
+# CRITICAL: Sync clock via NTP before anything else
+# RPi has no battery-backed RTC — clock is wrong on first boot
+# Wrong clock = SSL certs "not yet valid" = apt/pip/curl all fail
+echo "Syncing system clock..."
+# Try timedatectl first (systemd)
+timedatectl set-ntp true 2>/dev/null || true
+# Force immediate NTP sync
+systemctl restart systemd-timesyncd 2>/dev/null || true
+# Wait for clock to sync (check if year is reasonable)
+for i in $(seq 1 15); do
+    YEAR=$(date +%Y)
+    if [ "$YEAR" -ge 2025 ]; then
+        echo "Clock synced: $(date)"
+        break
+    fi
+    echo "Waiting for clock sync... (currently $(date))"
+    sleep 2
+done
+# Last resort: use HTTP date header
+if [ "$(date +%Y)" -lt 2025 ]; then
+    echo "NTP failed, using HTTP date header..."
+    HTTP_DATE=$(curl -sI https://google.com 2>/dev/null | grep -i "^date:" | cut -d' ' -f2-)
+    if [ -n "$HTTP_DATE" ]; then
+        date -s "$HTTP_DATE" 2>/dev/null || true
+    fi
+fi
+echo "Current time: $(date)"
+
 # Install system packages
 echo "Installing system packages..."
 apt-get update -qq
