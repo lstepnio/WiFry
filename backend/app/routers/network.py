@@ -25,17 +25,49 @@ async def get_clients():
 
 @router.get("/ap/status")
 async def get_ap_status():
-    """Get WiFi AP status."""
+    """Get WiFi AP status from live hostapd/iw state."""
+    import re
     from ..config import settings
+    from ..utils.shell import run
 
+    iface = settings.ap_interface or "wlan0"
     clients = await list_wifi_clients()
+
+    # Read live state from iw
+    ssid = settings.ap_ssid
+    channel = settings.ap_channel
+    band = settings.ap_band
+    active = False
+
+    if not settings.mock_mode:
+        result = await run("iw", "dev", iface, "info", sudo=True, check=False)
+        if result.success:
+            # Parse SSID
+            ssid_match = re.search(r"ssid (.+)", result.stdout)
+            if ssid_match:
+                ssid = ssid_match.group(1).strip()
+
+            # Parse channel and frequency
+            chan_match = re.search(r"channel (\d+) \((\d+) MHz\)", result.stdout)
+            if chan_match:
+                channel = int(chan_match.group(1))
+                freq = int(chan_match.group(2))
+                band = "5GHz" if freq >= 5000 else "2.4GHz"
+
+            active = "type AP" in result.stdout
+
+        # Also check systemd
+        status = await run("systemctl", "is-active", "hostapd", check=False)
+        if status.stdout.strip() != "active":
+            active = False
+
     return {
-        "ssid": settings.ap_ssid,
-        "channel": settings.ap_channel,
-        "band": settings.ap_band,
-        "interface": settings.ap_interface or "wlan0",
+        "ssid": ssid,
+        "channel": channel,
+        "band": band,
+        "interface": iface,
         "client_count": len(clients),
-        "active": True,  # TODO: check hostapd status
+        "active": active,
     }
 
 
