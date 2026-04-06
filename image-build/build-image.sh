@@ -62,25 +62,37 @@ EOF
 touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
 touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 
-# Fix stage2 missing packages: some rpi-* packages don't exist in the repo
-STAGE2_PKGS="$PIGEN_DIR/stage2/01-sys-tweaks/00-packages"
-if [[ -f "$STAGE2_PKGS" ]]; then
-    sed -i 's/rpi-swap//g; s/rpi-loop-utils//g; s/rpi-usb-gadget//g' "$STAGE2_PKGS"
-    echo "Patched stage2 packages (removed unavailable rpi-* packages)"
-fi
+# Comprehensive pi-gen stage2 patches for arm64 bookworm compatibility.
+# Many rpi-* packages don't exist in the standard repos for arm64.
+echo "Applying stage2 compatibility patches..."
 
-# Fix stage2 run script: rpi-resize.service doesn't exist, make enable calls non-fatal
-STAGE2_RUN="$PIGEN_DIR/stage2/01-sys-tweaks/01-run.sh"
-if [[ -f "$STAGE2_RUN" ]]; then
-    sed -i 's/systemctl enable \(.*\)$/systemctl enable \1 || true/g' "$STAGE2_RUN"
-    echo "Patched stage2 run script (non-fatal systemctl enable)"
-fi
+# Remove all unavailable rpi-* packages from every package file in stage2
+find "$PIGEN_DIR/stage2" -name "00-packages*" -type f | while read pkgfile; do
+    sed -i 's/rpi-swap//g; s/rpi-loop-utils//g; s/rpi-usb-gadget//g; s/rpi-cloud-init-mods//g' "$pkgfile"
+    echo "  Patched: $pkgfile"
+done
 
-# Skip cloud-init substage (rpi-cloud-init-mods package doesn't exist)
+# Make all systemctl enable calls non-fatal (missing services)
+find "$PIGEN_DIR/stage2" -name "*.sh" -type f | while read script; do
+    if grep -q "systemctl enable" "$script"; then
+        sed -i 's/systemctl enable \(.*\)/systemctl enable \1 || true/g' "$script"
+        echo "  Patched systemctl: $script"
+    fi
+done
+
+# Skip cloud-init substage entirely (rpi-cloud-init-mods unavailable)
 if [[ -d "$PIGEN_DIR/stage2/04-cloud-init" ]]; then
     touch "$PIGEN_DIR/stage2/04-cloud-init/SKIP"
-    echo "Skipped stage2/04-cloud-init (unavailable package)"
+    echo "  Skipped: stage2/04-cloud-init"
 fi
+
+# Skip mathematica EULA (not needed)
+if [[ -d "$PIGEN_DIR/stage2/03-accept-mathematica-eula" ]]; then
+    touch "$PIGEN_DIR/stage2/03-accept-mathematica-eula/SKIP"
+    echo "  Skipped: stage2/03-accept-mathematica-eula"
+fi
+
+echo "Stage2 patches complete."
 
 # Fix Debian GPG key issue: download fresh debian-archive-keyring and
 # install it into the rootfs before pi-gen runs apt-get update.
