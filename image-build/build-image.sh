@@ -228,7 +228,7 @@ ln -sf /etc/systemd/system/wifry-recovery.service "$WANTS/wifry-recovery.service
 rm -f "$MOUNT_DIR/etc/systemd/system/hostapd.service"  # Remove mask if exists
 ln -sf /lib/systemd/system/hostapd.service "$WANTS/hostapd.service" 2>/dev/null || true
 
-# hostapd override: rfkill + reg domain + run in foreground (not -B)
+# hostapd override: rfkill + reg domain + foreground mode + stale socket cleanup
 # Foreground mode fixes 5GHz timing issue where -B races reg domain propagation
 mkdir -p "$MOUNT_DIR/etc/systemd/system/hostapd.service.d"
 cat > "$MOUNT_DIR/etc/systemd/system/hostapd.service.d/wifry.conf" <<'HAPD_OVERRIDE'
@@ -236,9 +236,10 @@ cat > "$MOUNT_DIR/etc/systemd/system/hostapd.service.d/wifry.conf" <<'HAPD_OVERR
 Type=simple
 ExecStartPre=/usr/sbin/rfkill unblock wlan
 ExecStartPre=/usr/sbin/iw reg set US
+ExecStartPre=/bin/rm -f /var/run/hostapd/wlan0
 ExecStartPre=/bin/sleep 2
 ExecStart=
-ExecStart=/usr/sbin/hostapd ${DAEMON_CONF}
+ExecStart=/usr/sbin/hostapd /etc/hostapd/hostapd.conf
 HAPD_OVERRIDE
 
 # Enable dnsmasq
