@@ -41,14 +41,16 @@ def generate_hostapd_conf(
         ieee80211n = "ieee80211n=1"
         ieee80211ac = "ieee80211ac=1"
         ieee80211ax = "ieee80211ax=1"
-        if channel == 0:
+        # Force a valid 5GHz channel (2.4GHz channels 1-14 are invalid for hw_mode=a)
+        if channel < 32:
             channel = 36
     else:
         hw_mode = "g"
         ieee80211n = "ieee80211n=1"
         ieee80211ac = ""
         ieee80211ax = "ieee80211ax=1"
-        if channel == 0:
+        # Force a valid 2.4GHz channel (5GHz channels are invalid for hw_mode=g)
+        if channel == 0 or channel > 14:
             channel = 6
 
     template_path = TEMPLATE_DIR / "hostapd.conf.template"
