@@ -256,6 +256,15 @@ export default function CaptureManager({
                   Stop
                 </button>
               )}
+              {c.status !== 'running' && c.packet_count > 0 && (
+                <a
+                  href={`/api/v1/captures/${c.id}/download`}
+                  download={`${c.name || c.id}.pcap`}
+                  className="rounded border border-blue-300 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400"
+                >
+                  Download
+                </a>
+              )}
               {c.status !== 'running' && (
                 <button
                   onClick={() => onAnalyze(c.id)}
