@@ -90,11 +90,25 @@ async def apply_defaults() -> FullNetworkConfig:
     return await apply_config(config)
 
 
+async def _is_hostapd_running_correctly() -> bool:
+    """Check if hostapd is already running and serving an AP."""
+    from ..utils.shell import run
+    result = await run("systemctl", "is-active", "hostapd", check=False)
+    if result.stdout.strip() != "active":
+        return False
+    # Verify it has an SSID (not just "active" but actually serving)
+    iw_result = await run("iw", "dev", "wlan0", "info", sudo=True, check=False)
+    return "ssid" in iw_result.stdout.lower() and "type AP" in iw_result.stdout
+
+
 async def boot_apply() -> None:
     """Called on startup to apply the saved config (or defaults).
 
     Priority: boot profile > saved config > safe defaults.
     Fallback IP is always applied first regardless.
+
+    Skips hostapd restart if it's already running correctly
+    (avoids slow restarts on backend-only restarts).
     """
     config = get_current_config()
 
@@ -102,22 +116,27 @@ async def boot_apply() -> None:
         # Always apply fallback first (lockout prevention)
         await _apply_fallback(config.fallback)
 
-        # Check for a designated boot profile
-        _load_profiles()
-        boot_profile = next((p for p in _profiles.values() if p.is_boot_profile), None)
-
-        if boot_profile:
-            logger.info("Applying boot profile: %s", boot_profile.name)
-            await _apply_wifi_ap(boot_profile.config.wifi_ap)
-            await _apply_ethernet(boot_profile.config.ethernet)
-        elif not config.first_boot:
-            await _apply_wifi_ap(config.wifi_ap)
-            await _apply_ethernet(config.ethernet)
+        # Skip hostapd/dnsmasq if already running correctly
+        # (e.g., backend restarted but hostapd was never stopped)
+        if await _is_hostapd_running_correctly():
+            logger.info("hostapd already running — skipping AP config on boot")
         else:
-            # First boot — use safe defaults
-            defaults = FullNetworkConfig()
-            await _apply_wifi_ap(defaults.wifi_ap)
-            await _apply_ethernet(defaults.ethernet)
+            # Check for a designated boot profile
+            _load_profiles()
+            boot_profile = next((p for p in _profiles.values() if p.is_boot_profile), None)
+
+            if boot_profile:
+                logger.info("Applying boot profile: %s", boot_profile.name)
+                await _apply_wifi_ap(boot_profile.config.wifi_ap)
+                await _apply_ethernet(boot_profile.config.ethernet)
+            elif not config.first_boot:
+                await _apply_wifi_ap(config.wifi_ap)
+                await _apply_ethernet(config.ethernet)
+            else:
+                # First boot — use safe defaults
+                defaults = FullNetworkConfig()
+                await _apply_wifi_ap(defaults.wifi_ap)
+                await _apply_ethernet(defaults.ethernet)
 
     logger.info("Boot network config applied (first_boot=%s)", config.first_boot)
 
