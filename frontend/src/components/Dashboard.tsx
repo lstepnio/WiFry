@@ -21,6 +21,7 @@ import StatusBar from './StatusBar';
 import DnsPanel from './DnsPanel';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import FeatureFlagsPanel from './FeatureFlagsPanel';
+import HwValidationPanel from './HwValidationPanel';
 
 /*
  * 6 main tabs (fits nav without overflow):
@@ -218,6 +219,7 @@ export default function Dashboard() {
             {sysSubTab === 'network' && <NetworkConfigPanel />}
             {sysSubTab === 'tools' && (
               <div className="space-y-6">
+                <HwValidationPanel />
                 <WifiScanner />
                 <SpeedTest />
               </div>

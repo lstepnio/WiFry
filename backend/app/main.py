@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .config import settings
-from .routers import adb, annotations, captures, dns, hdmi, impairments, network, network_config, profiles, scanner, scenarios, sessions, sharing, streams, system, teleport, wifi_impairments
+from .routers import adb, annotations, captures, dns, hdmi, hw_tests, impairments, network, network_config, profiles, scanner, scenarios, sessions, sharing, streams, system, teleport, wifi_impairments
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -98,6 +98,7 @@ app.include_router(dns.router)
 app.include_router(network_config.router)
 app.include_router(sharing.router)
 app.include_router(system.router)
+app.include_router(hw_tests.router)
 
 
 @app.get("/api/v1/health")

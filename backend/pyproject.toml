@@ -28,3 +28,8 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "hw_readiness: Tier 1 - system readiness checks (binaries, services, permissions)",
+    "hw_smoke: Tier 2 - API smoke tests on real hardware (no client needed)",
+    "hw_integration: Tier 3 - full integration tests (requires --hw-client-ip)",
+]
