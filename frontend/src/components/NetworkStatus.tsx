@@ -81,7 +81,7 @@ export default function NetworkStatus() {
                   <td className="py-2 pr-4 text-gray-900 dark:text-white">{c.hostname || '—'}</td>
                   <td className="py-2 pr-4 font-mono text-gray-600 dark:text-gray-400">{c.ip}</td>
                   <td className="py-2 pr-4 font-mono text-xs text-gray-500">{c.mac}</td>
-                  <td className="py-2 text-gray-600 dark:text-gray-400">{c.signal_dbm} dBm</td>
+                  <td className="py-2 text-gray-600 dark:text-gray-400">{c.signal_dbm ? `${c.signal_dbm} dBm` : 'N/A'}</td>
                 </tr>
               ))}
               {(clients ?? []).length === 0 && (

@@ -79,6 +79,44 @@ async def run(
     return result
 
 
+async def sudo_write(path: str, content: str) -> CommandResult:
+    """Write content to a file using sudo tee (for privileged paths).
+
+    Use this instead of Path.write_text() when the running user doesn't
+    own the target file (e.g., /etc/hostapd/hostapd.conf).
+    """
+    logger.debug("sudo_write: %s (%d bytes)", path, len(content))
+
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "tee", path,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(input=content.encode()), timeout=10.0
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    result = CommandResult(
+        returncode=proc.returncode or 0,
+        stdout=stdout_bytes.decode().strip(),
+        stderr=stderr_bytes.decode().strip(),
+    )
+
+    if not result.success:
+        raise RuntimeError(
+            f"sudo_write failed (exit {result.returncode}): {path}\n{result.stderr}"
+        )
+
+    return result
+
+
 class MockShell:
     """Mock shell that logs commands instead of executing them.
 

@@ -129,6 +129,8 @@ for dir in captures reports sessions segments bundles annotations \
            adb-files hdmi-captures coredns teleport network-profiles; do
     mkdir -p "$DATA_DIR/$dir"
 done
+# tshark/dumpcap drops privileges and needs world-writable captures dir
+chmod 1777 "$DATA_DIR/captures"
 mkdir -p "$MOUNT_DIR/var/log/wifry"
 
 # Write version
@@ -145,6 +147,8 @@ mkdir -p "$MOUNT_DIR/etc/hostapd"
 cat > "$MOUNT_DIR/etc/hostapd/hostapd.conf" <<'HOSTAPD'
 interface=wlan0
 driver=nl80211
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
 ssid=WiFry
 utf8_ssid=1
 hw_mode=g
@@ -322,6 +326,10 @@ fi
 
 # Fix ownership
 chown -R wifry:wifry /opt/wifry /var/lib/wifry /var/log/wifry
+# tshark/dumpcap drops privileges — captures dir must be world-writable
+chmod 1777 /var/lib/wifry/captures
+# Add wifry to wireshark group for dumpcap access
+usermod -aG wireshark wifry 2>/dev/null || true
 
 # Python venv + pip install (native ARM, SSL works)
 echo "Setting up Python environment..."
@@ -347,6 +355,10 @@ echo "WiFry first boot complete at $(date)"
 
 # Unblock WiFi radio (RPi OS ships with it soft-blocked)
 rfkill unblock wlan 2>/dev/null || true
+
+# Set regulatory domain for 5GHz support (must be before hostapd starts)
+iw reg set US 2>/dev/null || true
+echo "REGDOMAIN=US" > /etc/default/crda 2>/dev/null || true
 
 # Disable wpa_supplicant (conflicts with hostapd AP mode)
 systemctl stop wpa_supplicant 2>/dev/null || true

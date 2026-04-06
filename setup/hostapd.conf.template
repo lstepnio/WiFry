@@ -3,6 +3,10 @@
 
 interface=${AP_INTERFACE}
 driver=nl80211
+
+# Control interface for hostapd_cli
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
 ssid=${AP_SSID}
 utf8_ssid=1
 

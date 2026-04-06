@@ -15,7 +15,7 @@ from ..models.wifi_impairment import (
     WifiImpairmentConfig,
     WifiImpairmentState,
 )
-from ..utils.shell import run
+from ..utils.shell import run, sudo_write
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ async def _apply_dhcp_disruption(config) -> None:
     if config.mode == "delay":
         # Validate delay is an integer (defense in depth — Pydantic already validates)
         delay = int(config.delay_secs)
-        conf_path.write_text(f"dhcp-reply-delay={delay}\n")
+        await sudo_write(str(conf_path), f"dhcp-reply-delay={delay}\n")
         await run("systemctl", "reload", "dnsmasq", sudo=True, check=False)
 
     elif config.mode == "fail":
@@ -254,7 +254,7 @@ async def _apply_dhcp_disruption(config) -> None:
         )
 
     elif config.mode == "change_ip":
-        conf_path.write_text("dhcp-range=192.168.4.201,192.168.4.250,255.255.255.0,30s\n")
+        await sudo_write(str(conf_path), "dhcp-range=192.168.4.201,192.168.4.250,255.255.255.0,30s\n")
         await run("systemctl", "reload", "dnsmasq", sudo=True, check=False)
 
     logger.info("DHCP disruption: mode=%s", config.mode)

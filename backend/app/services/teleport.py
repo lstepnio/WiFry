@@ -25,7 +25,7 @@ from typing import Dict, List, Optional
 
 from ..config import settings
 from ..models.teleport import TeleportProfile, TeleportStatus
-from ..utils.shell import run
+from ..utils.shell import run, sudo_write
 
 logger = logging.getLogger(__name__)
 
@@ -230,8 +230,8 @@ async def _connect_wireguard(profile: TeleportProfile) -> None:
     conf_path = WG_CONF_DIR / f"{iface}.conf"
 
     # Write config (secops-provided)
-    WG_CONF_DIR.mkdir(parents=True, exist_ok=True)
-    conf_path.write_text(profile.wireguard_config)
+    await run("mkdir", "-p", str(WG_CONF_DIR), sudo=True, check=False)
+    await sudo_write(str(conf_path), profile.wireguard_config)
     await run("chmod", "600", str(conf_path), sudo=True, check=False)
 
     # Bring up WireGuard interface

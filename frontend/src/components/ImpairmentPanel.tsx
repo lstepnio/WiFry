@@ -61,6 +61,8 @@ export default function ImpairmentPanel() {
   const [selectedInterface, setSelectedInterface] = useState('');
   const [config, setConfig] = useState<ImpairmentConfig>(DEFAULT_CONFIG);
   const [applying, setApplying] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [feedback, setFeedback] = useState<'success' | 'error' | null>(null);
 
   useEffect(() => {
     if (states && states.length > 0 && !selectedInterface) {
@@ -69,6 +71,8 @@ export default function ImpairmentPanel() {
   }, [states, selectedInterface]);
 
   useEffect(() => {
+    // Only sync from server when user hasn't made local changes
+    if (dirty) return;
     if (states && selectedInterface) {
       const state = states.find((s) => s.interface === selectedInterface);
       if (state && state.active) {
@@ -78,9 +82,10 @@ export default function ImpairmentPanel() {
         });
       }
     }
-  }, [states, selectedInterface]);
+  }, [states, selectedInterface, dirty]);
 
   const update = (path: string, value: number) => {
+    setDirty(true);
     setConfig((prev) => {
       const next = JSON.parse(JSON.stringify(prev)) as ImpairmentConfig;
       const parts = path.split('.');
@@ -93,13 +98,21 @@ export default function ImpairmentPanel() {
     });
   };
 
+  const showFeedback = (type: 'success' | 'error') => {
+    setFeedback(type);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleApply = async () => {
     if (!selectedInterface) return;
     setApplying(true);
     try {
       await api.applyImpairment(selectedInterface, config);
+      setDirty(false);
+      showFeedback('success');
       refresh();
     } catch (e) {
+      showFeedback('error');
       alert(e instanceof Error ? e.message : 'Failed to apply');
     } finally {
       setApplying(false);
@@ -112,8 +125,11 @@ export default function ImpairmentPanel() {
     try {
       await api.clearImpairment(selectedInterface);
       setConfig(DEFAULT_CONFIG);
+      setDirty(false);
+      showFeedback('success');
       refresh();
     } catch (e) {
+      showFeedback('error');
       alert(e instanceof Error ? e.message : 'Failed to clear');
     } finally {
       setApplying(false);
@@ -169,13 +185,24 @@ export default function ImpairmentPanel() {
         </div>
       </div>
 
-      <div className="mt-6 flex gap-3">
+      {feedback === 'success' && (
+        <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm font-medium text-green-400">
+          Impairments applied successfully
+        </div>
+      )}
+      {feedback === 'error' && (
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400">
+          Failed to apply impairments
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-3">
         <button
           onClick={handleApply}
           disabled={applying}
           className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {applying ? 'Applying...' : 'Apply'}
+          {applying ? 'Applying...' : dirty ? 'Apply *' : 'Apply'}
         </button>
         <button
           onClick={handleClear}
@@ -184,6 +211,18 @@ export default function ImpairmentPanel() {
         >
           Clear All
         </button>
+        {states && selectedInterface && (() => {
+          const st = states.find((s) => s.interface === selectedInterface);
+          return st?.active ? (
+            <span className="ml-2 rounded-full bg-yellow-500/20 px-3 py-1 text-xs font-medium text-yellow-400">
+              Active on {selectedInterface}
+            </span>
+          ) : (
+            <span className="ml-2 rounded-full bg-gray-500/20 px-3 py-1 text-xs font-medium text-gray-500">
+              No impairments active
+            </span>
+          );
+        })()}
       </div>
     </div>
   );

@@ -53,6 +53,18 @@ wifry ALL=(ALL) NOPASSWD: /bin/killall openvpn
 # CoreDNS
 wifry ALL=(ALL) NOPASSWD: /usr/local/bin/coredns
 
+# Config file writes via tee
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/hostapd/hostapd.conf
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/wifry.conf
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/wifry-dns.conf
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/dnsmasq.d/wifry-impairment.conf
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/wireguard/*.conf
+
+# Directory creation for config paths
+wifry ALL=(ALL) NOPASSWD: /bin/mkdir -p /etc/hostapd
+wifry ALL=(ALL) NOPASSWD: /bin/mkdir -p /etc/dnsmasq.d
+wifry ALL=(ALL) NOPASSWD: /bin/mkdir -p /etc/wireguard
+
 # File permissions for config writes
 wifry ALL=(ALL) NOPASSWD: /bin/chmod 600 /etc/wireguard/*
 wifry ALL=(ALL) NOPASSWD: /bin/chmod 600 /var/lib/wifry/teleport/*

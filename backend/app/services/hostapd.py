@@ -5,7 +5,7 @@ from pathlib import Path
 from string import Template
 
 from ..config import settings
-from ..utils.shell import run
+from ..utils.shell import run, sudo_write
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +87,41 @@ def generate_dnsmasq_conf(
 
 
 async def write_and_restart_hostapd(**kwargs: str | int) -> None:
-    """Write hostapd config and restart the service."""
+    """Write hostapd config and restart the service.
+
+    If the new config fails (e.g., 5GHz not supported), automatically
+    rolls back to 2.4GHz safe defaults so the AP stays reachable.
+    """
     if settings.mock_mode:
         logger.info("Mock: would write hostapd.conf and restart")
         return
 
+    # Save current config for rollback
+    backup = HOSTAPD_CONF.read_text() if HOSTAPD_CONF.exists() else None
+
     conf = generate_hostapd_conf(**kwargs)
-    HOSTAPD_CONF.parent.mkdir(parents=True, exist_ok=True)
-    HOSTAPD_CONF.write_text(conf)
+    await run("mkdir", "-p", str(HOSTAPD_CONF.parent), sudo=True, check=False)
+    await sudo_write(str(HOSTAPD_CONF), conf)
     logger.info("Wrote %s", HOSTAPD_CONF)
 
-    await run("systemctl", "restart", "hostapd", sudo=True, check=True)
-    logger.info("Restarted hostapd")
+    # Set regulatory domain before restart (5GHz needs this applied first)
+    country = kwargs.get("country_code", "US")
+    await run("iw", "reg", "set", country, sudo=True, check=False)
+
+    result = await run("systemctl", "restart", "hostapd", sudo=True, check=False)
+    if result.success:
+        logger.info("Restarted hostapd")
+    else:
+        logger.error("hostapd failed to start: %s", result.stderr)
+        # Rollback to previous working config
+        if backup:
+            logger.warning("Rolling back hostapd config to previous working state")
+            await sudo_write(str(HOSTAPD_CONF), backup)
+            await run("systemctl", "restart", "hostapd", sudo=True, check=False)
+        raise RuntimeError(
+            f"hostapd failed to start with new config: {result.stderr}. "
+            "Rolled back to previous working config."
+        )
 
 
 async def write_and_restart_dnsmasq(**kwargs: str) -> None:
@@ -108,8 +131,8 @@ async def write_and_restart_dnsmasq(**kwargs: str) -> None:
         return
 
     conf = generate_dnsmasq_conf(**kwargs)
-    DNSMASQ_CONF.parent.mkdir(parents=True, exist_ok=True)
-    DNSMASQ_CONF.write_text(conf)
+    await run("mkdir", "-p", str(DNSMASQ_CONF.parent), sudo=True, check=False)
+    await sudo_write(str(DNSMASQ_CONF), conf)
     logger.info("Wrote %s", DNSMASQ_CONF)
 
     await run("systemctl", "restart", "dnsmasq", sudo=True, check=True)

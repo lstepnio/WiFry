@@ -33,7 +33,7 @@ from ..models.dns import (
     DnsQueryLogEntry,
     DnsStatus,
 )
-from ..utils.shell import run
+from ..utils.shell import run, sudo_write
 
 logger = logging.getLogger(__name__)
 
@@ -403,8 +403,8 @@ async def _point_dnsmasq_to_coredns(port: int) -> None:
         logger.info("Mock: dnsmasq would forward to 127.0.0.1#%d", port)
         return
 
-    conf_path = Path("/etc/dnsmasq.d/wifry-dns.conf")
-    conf_path.write_text(f"server=127.0.0.1#{port}\nno-resolv\n")
+    conf_path = "/etc/dnsmasq.d/wifry-dns.conf"
+    await sudo_write(conf_path, f"server=127.0.0.1#{port}\nno-resolv\n")
     await run("systemctl", "reload", "dnsmasq", sudo=True, check=False)
     logger.info("dnsmasq forwarding to CoreDNS on port %d", port)
 
@@ -421,10 +421,10 @@ async def _point_dnsmasq_to_upstream(config: DnsConfig) -> None:
     if not plain_servers:
         plain_servers = ["8.8.8.8"]
 
-    conf_path = Path("/etc/dnsmasq.d/wifry-dns.conf")
+    conf_path = "/etc/dnsmasq.d/wifry-dns.conf"
     lines = [f"server={s}" for s in plain_servers]
     lines.append("no-resolv")
-    conf_path.write_text("\n".join(lines) + "\n")
+    await sudo_write(conf_path, "\n".join(lines) + "\n")
     await run("systemctl", "reload", "dnsmasq", sudo=True, check=False)
     logger.info("dnsmasq forwarding directly to %s", plain_servers)
 

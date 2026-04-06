@@ -90,19 +90,21 @@ class TestParseNetemOptions:
         assert config.loss is None
 
     def test_delay(self):
-        opts = {"delay": 50000, "jitter": 10000, "delay_corr": 25}
+        # Real tc -j format: delay as nested dict with seconds
+        opts = {"delay": {"delay": 0.05, "jitter": 0.01, "correlation": 0.25}}
         config = _parse_netem_options(opts)
         assert config.delay is not None
         assert config.delay.ms == 50.0
         assert config.delay.jitter_ms == 10.0
-        assert config.delay.correlation_pct == 25
+        assert config.delay.correlation_pct == 25.0
 
     def test_loss(self):
-        opts = {"loss-random": {"loss": 1.5, "correlation": 25}}
+        # Real tc -j format: fractions (0.015 = 1.5%)
+        opts = {"loss-random": {"loss": 0.015, "correlation": 0.25}}
         config = _parse_netem_options(opts)
         assert config.loss is not None
         assert config.loss.pct == 1.5
-        assert config.loss.correlation_pct == 25
+        assert config.loss.correlation_pct == 25.0
 
 
 class TestParseQdiscs:
@@ -112,14 +114,13 @@ class TestParseQdiscs:
         assert not state.active
 
     def test_netem_qdisc(self):
+        # Real tc -j format from RPi
         qdiscs = [
             {
                 "kind": "netem",
                 "options": {
-                    "delay": 30000,
-                    "jitter": 5000,
-                    "delay_corr": 0,
-                    "loss-random": {"loss": 0.5, "correlation": 0},
+                    "delay": {"delay": 0.03, "jitter": 0.005, "correlation": 0},
+                    "loss-random": {"loss": 0.005, "correlation": 0},
                 },
             }
         ]
@@ -132,7 +133,7 @@ class TestParseQdiscs:
 
     def test_netem_with_tbf(self):
         qdiscs = [
-            {"kind": "netem", "options": {"delay": 50000}},
+            {"kind": "netem", "options": {"delay": {"delay": 0.05}}},
             {"kind": "tbf", "options": {"rate": 1250000, "burst": 4000}},
         ]
         state = _parse_qdiscs("eth0", qdiscs)

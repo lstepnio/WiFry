@@ -50,8 +50,9 @@ def _build_netem_args(config: ImpairmentConfig) -> list[str]:
         args.extend(["delay", _fmt(config.delay.ms, "ms")])
         if config.delay.jitter_ms > 0:
             args.append(_fmt(config.delay.jitter_ms, "ms"))
-        if config.delay.correlation_pct > 0:
-            args.append(_fmt(config.delay.correlation_pct, "%"))
+            # tc netem requires jitter before correlation
+            if config.delay.correlation_pct > 0:
+                args.append(_fmt(config.delay.correlation_pct, "%"))
 
     if config.loss and config.loss.pct > 0:
         args.extend(["loss", _fmt(config.loss.pct, "%")])
@@ -158,9 +159,9 @@ def _parse_qdiscs(interface: str, qdiscs: list[dict[str, Any]]) -> InterfaceImpa
             state.config = _parse_netem_options(opts)
 
         elif kind == "tbf":
-            rate_bytes = qdisc.get("options", {}).get("rate", 0)
+            rate_bytes = _tc_num(qdisc.get("options", {}).get("rate", 0))
             if rate_bytes and state.config:
-                burst = qdisc.get("options", {}).get("burst", 32000)
+                burst = _tc_num(qdisc.get("options", {}).get("burst", 32000))
                 state.config.rate = RateConfig(
                     kbit=int(rate_bytes * 8 / 1000),
                     burst=f"{int(burst * 8 / 1000)}kbit",
@@ -169,37 +170,79 @@ def _parse_qdiscs(interface: str, qdiscs: list[dict[str, Any]]) -> InterfaceImpa
     return state
 
 
+def _tc_num(val: Any) -> float:
+    """Extract a numeric value from tc -j output.
+
+    tc -j may return plain numbers or dicts like {"delay": 200000000}
+    depending on the iproute2 version. Handle both.
+    """
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, dict):
+        # Try common keys; fall back to first numeric value
+        for key in ("delay", "jitter", "rate", "loss", "corrupt",
+                     "duplicate", "reorder", "correlation", "value"):
+            if key in val and isinstance(val[key], (int, float)):
+                return float(val[key])
+        # Last resort: grab first numeric value
+        for v in val.values():
+            if isinstance(v, (int, float)):
+                return float(v)
+    return 0.0
+
+
 def _parse_netem_options(opts: dict[str, Any]) -> ImpairmentConfig:
     """Parse netem options from tc JSON into ImpairmentConfig."""
     config = ImpairmentConfig()
 
-    delay_us = opts.get("delay", 0)
-    jitter_us = opts.get("jitter", 0)
-    delay_corr = opts.get("delay_corr", 0)
-    if delay_us:
+    # tc -j returns delay/jitter in seconds (0.2 = 200ms)
+    # and percentages as fractions (0.03 = 3%)
+    delay_raw = opts.get("delay", 0)
+    if isinstance(delay_raw, dict):
+        delay_s = _tc_num(delay_raw.get("delay", 0))
+        jitter_s = _tc_num(delay_raw.get("jitter", 0))
+        delay_corr_frac = _tc_num(delay_raw.get("correlation", 0))
+    else:
+        delay_s = _tc_num(delay_raw)
+        jitter_s = _tc_num(opts.get("jitter", 0))
+        delay_corr_frac = _tc_num(opts.get("delay_corr", 0))
+    if delay_s:
         config.delay = DelayConfig(
-            ms=delay_us / 1000,
-            jitter_ms=jitter_us / 1000,
-            correlation_pct=delay_corr,
+            ms=delay_s * 1000,
+            jitter_ms=jitter_s * 1000,
+            correlation_pct=delay_corr_frac * 100,
         )
 
-    loss_pct = opts.get("loss-random", {}).get("loss", 0)
-    loss_corr = opts.get("loss-random", {}).get("correlation", 0)
-    if loss_pct:
-        config.loss = LossConfig(pct=loss_pct, correlation_pct=loss_corr)
+    # tc -j returns percentages as fractions (0.03 = 3%)
+    loss_random = opts.get("loss-random", {})
+    if not isinstance(loss_random, dict):
+        loss_random = {}
+    loss_frac = _tc_num(loss_random.get("loss", 0))
+    loss_corr_frac = _tc_num(loss_random.get("correlation", 0))
+    if loss_frac:
+        config.loss = LossConfig(pct=loss_frac * 100, correlation_pct=loss_corr_frac * 100)
 
-    corrupt_pct = opts.get("corrupt", {}).get("corrupt", 0)
-    if corrupt_pct:
-        config.corrupt = CorruptConfig(pct=corrupt_pct)
+    corrupt_dict = opts.get("corrupt", {})
+    if not isinstance(corrupt_dict, dict):
+        corrupt_dict = {}
+    corrupt_frac = _tc_num(corrupt_dict.get("corrupt", 0))
+    if corrupt_frac:
+        config.corrupt = CorruptConfig(pct=corrupt_frac * 100)
 
-    dup_pct = opts.get("duplicate", {}).get("duplicate", 0)
-    if dup_pct:
-        config.duplicate = DuplicateConfig(pct=dup_pct)
+    dup_dict = opts.get("duplicate", {})
+    if not isinstance(dup_dict, dict):
+        dup_dict = {}
+    dup_frac = _tc_num(dup_dict.get("duplicate", 0))
+    if dup_frac:
+        config.duplicate = DuplicateConfig(pct=dup_frac * 100)
 
-    reorder_pct = opts.get("reorder", {}).get("reorder", 0)
-    reorder_corr = opts.get("reorder", {}).get("correlation", 0)
-    if reorder_pct:
-        config.reorder = ReorderConfig(pct=reorder_pct, correlation_pct=reorder_corr)
+    reorder_dict = opts.get("reorder", {})
+    if not isinstance(reorder_dict, dict):
+        reorder_dict = {}
+    reorder_frac = _tc_num(reorder_dict.get("reorder", 0))
+    reorder_corr_frac = _tc_num(reorder_dict.get("correlation", 0))
+    if reorder_frac:
+        config.reorder = ReorderConfig(pct=reorder_frac * 100, correlation_pct=reorder_corr_frac * 100)
 
     return config
 

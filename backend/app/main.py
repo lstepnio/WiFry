@@ -2,9 +2,12 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .config import settings
 from .routers import adb, annotations, captures, dns, hdmi, impairments, network, network_config, profiles, scanner, scenarios, sessions, sharing, streams, system, teleport, wifi_impairments
@@ -120,3 +123,31 @@ async def deactivate_gremlin():
 @app.get("/api/v1/gremlin/status", include_in_schema=False)
 async def gremlin_status():
     return gremlin.get_status()
+
+
+# --- Serve frontend static files ---
+# The built React app is served from the same origin so API calls
+# to /api/v1/... are handled by the routes above, and everything
+# else falls through to the SPA.
+
+_frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if _frontend_dist.is_dir():
+    # Serve static assets (JS, CSS, images) under /assets
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
+
+    # SPA fallback: any non-API route returns index.html
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Never intercept API routes
+        if full_path.startswith("api/"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        # Try to serve a static file first
+        file_path = _frontend_dist / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(str(file_path))
+        # Fall back to index.html for SPA routing
+        return FileResponse(str(_frontend_dist / "index.html"))

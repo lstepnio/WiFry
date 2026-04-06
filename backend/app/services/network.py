@@ -102,7 +102,8 @@ async def list_wifi_clients() -> list[WifiClient]:
         return _mock_wifi_clients()
 
     # Parse hostapd connected stations
-    result = await run("hostapd_cli", "all_sta", check=False)
+    iface = settings.ap_interface or "wlan0"
+    result = await run("hostapd_cli", "-i", iface, "all_sta", sudo=True, check=False)
     if not result.success:
         return []
 
