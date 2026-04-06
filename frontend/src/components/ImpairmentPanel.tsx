@@ -87,7 +87,14 @@ export default function ImpairmentPanel() {
   const update = (path: string, value: number) => {
     setDirty(true);
     setConfig((prev) => {
-      const next = JSON.parse(JSON.stringify(prev)) as ImpairmentConfig;
+      // Merge with defaults so null sub-objects become valid objects
+      const merged = { ...DEFAULT_CONFIG, ...prev };
+      for (const key of Object.keys(DEFAULT_CONFIG) as (keyof ImpairmentConfig)[]) {
+        if (merged[key] == null && DEFAULT_CONFIG[key] != null) {
+          (merged as Record<string, unknown>)[key] = JSON.parse(JSON.stringify(DEFAULT_CONFIG[key]));
+        }
+      }
+      const next = JSON.parse(JSON.stringify(merged)) as ImpairmentConfig;
       const parts = path.split('.');
       let obj: Record<string, unknown> = next as unknown as Record<string, unknown>;
       for (let i = 0; i < parts.length - 1; i++) {
