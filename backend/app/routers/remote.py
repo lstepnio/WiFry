@@ -41,9 +41,9 @@ class ExecResponse(BaseModel):
 class DeployRequest(BaseModel):
     path: str
     content: str
-    owner: str = "wifry:wifry"
+    owner: str = ""
     mode: str = ""
-    sudo: bool = True
+    sudo: bool = False  # Try direct write first; set True for /etc/ paths
 
 
 class DeployResponse(BaseModel):
@@ -106,20 +106,26 @@ async def deploy_file(req: DeployRequest):
     logger.info("Remote deploy: %s (%d bytes)", req.path, len(req.content))
 
     try:
-        if req.sudo:
-            # Ensure parent directory exists
+        # Try direct write first, fall back to sudo tee
+        written = False
+        if not req.sudo:
+            try:
+                Path(req.path).parent.mkdir(parents=True, exist_ok=True)
+                Path(req.path).write_text(req.content)
+                written = True
+            except PermissionError:
+                pass  # Fall through to sudo
+
+        if not written:
             parent = str(Path(req.path).parent)
             await run("mkdir", "-p", parent, sudo=True, check=False)
             await sudo_write(req.path, req.content)
-        else:
-            Path(req.path).parent.mkdir(parents=True, exist_ok=True)
-            Path(req.path).write_text(req.content)
 
-        # Set ownership
+        # Set ownership if specified
         if req.owner:
             await run("chown", req.owner, req.path, sudo=True, check=False)
 
-        # Set mode
+        # Set mode if specified
         if req.mode:
             await run("chmod", req.mode, req.path, sudo=True, check=False)
 
