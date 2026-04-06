@@ -263,15 +263,17 @@ async def probe_from_url(req: ProbeUrlRequest):
             # Fetch the media playlist
             media_url = best.uri if best.uri.startswith("http") else urljoin(url, best.uri)
             content = await _fetch_url(media_url)
+        else:
+            media_url = url
 
-        # Parse media playlist
-        media = parse_media(content, base_url=url)
+        # Parse media playlist (base_url must be the media playlist URL, not master)
+        media = parse_media(content, base_url=media_url)
         manifest_info.setdefault("type", "hls_media")
         manifest_info["segments_total"] = len(media.segments)
         manifest_info["target_duration"] = media.target_duration
 
         for seg in media.segments[:max_seg]:
-            seg_url = seg.uri if seg.uri.startswith("http") else urljoin(url, seg.uri)
+            seg_url = seg.uri if seg.uri.startswith("http") else urljoin(media_url, seg.uri)
             segment_urls.append(seg_url)
 
     if not segment_urls:
