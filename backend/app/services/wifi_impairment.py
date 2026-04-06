@@ -111,6 +111,9 @@ async def clear() -> WifiImpairmentState:
         # Restore rate limits
         await run("iw", "dev", iface, "set", "bitrates", sudo=True, check=False)
 
+        # Clean up DHCP disruption (iptables rules + dnsmasq config)
+        await _cleanup_dhcp_disruption()
+
         # Restore beacon interval (requires hostapd restart with default config)
         # We don't restart hostapd here to avoid disruption; it'll be restored on next config apply
 
