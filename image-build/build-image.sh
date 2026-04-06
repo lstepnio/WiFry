@@ -287,6 +287,7 @@ echo "Current time: $(date)"
 echo "Installing system packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+apt --fix-broken install -y 2>/dev/null || true
 apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
     python3-venv hostapd dnsmasq bridge-utils \
     tshark wireless-tools iw ffmpeg v4l-utils \
