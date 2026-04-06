@@ -47,6 +47,15 @@ export default function NetworkConfigPanel() {
   }, []);
   const { data: config, refresh } = useApi<FullNetworkConfig>(configFetcher);
 
+  const capsFetcher = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/wifi-impairments/capabilities');
+      return res.ok ? res.json() : null;
+    } catch { return null; }
+  }, []);
+  const { data: caps } = useApi<{ features: Record<string, { supported: boolean; reason: string }> }>(capsFetcher);
+  const band5ghzSupported = caps?.features?.band_5ghz?.supported !== false;
+
   const profilesFetcher = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/network-config/profiles');
@@ -157,7 +166,9 @@ export default function NetworkConfigPanel() {
             <select value={ap.band} onChange={e => setAp({...ap, band: e.target.value})}
               className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white">
               <option value="2.4GHz">2.4 GHz</option>
-              <option value="5GHz">5 GHz</option>
+              <option value="5GHz" disabled={!band5ghzSupported}>
+                5 GHz{!band5ghzSupported ? ' (not supported on this hardware)' : ''}
+              </option>
             </select>
           </div>
           <Input label="Channel" value={ap.channel} onChange={v => setAp({...ap, channel: parseInt(v) || 0})} type="number" title="0 = auto, 1-11 for 2.4GHz, 36-165 for 5GHz" />

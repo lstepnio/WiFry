@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("boot_apply failed (non-fatal): %s", e)
             logger.warning("Backend starting with degraded network config — check hostapd/dnsmasq manually")
+
+    # Detect WiFi hardware capabilities (non-fatal, cached for UI)
+    try:
+        from .services import hw_capabilities
+        await hw_capabilities.detect_capabilities()
+    except Exception as e:
+        logger.error("WiFi capability detection failed (non-fatal): %s", e)
+
     yield
 
     # --- Graceful shutdown: cancel background tasks, kill subprocesses ---

@@ -8,29 +8,49 @@ interface WifiImpairmentState {
   storm_active: boolean;
 }
 
+interface FeatureSupport {
+  supported: boolean;
+  reason: string;
+}
+
+interface WifiCapabilities {
+  features: Record<string, FeatureSupport>;
+  [key: string]: unknown;
+}
+
 interface ToggleRowProps {
   label: string;
   description: string;
   id: string;
   enabled: boolean;
   onToggle: (id: string, enabled: boolean) => void;
+  disabled?: boolean;
+  disabledReason?: string;
   children?: React.ReactNode;
 }
 
-function ToggleRow({ label, description, id, enabled, onToggle, children }: ToggleRowProps) {
+function ToggleRow({ label, description, id, enabled, onToggle, disabled, disabledReason, children }: ToggleRowProps) {
   return (
-    <div className={`rounded-lg border p-4 ${enabled ? 'border-orange-500 bg-orange-950/30' : 'border-gray-700 bg-gray-800/50'}`}>
+    <div className={`rounded-lg border p-4 ${
+      disabled ? 'border-gray-800 bg-gray-900/50 opacity-60' :
+      enabled ? 'border-orange-500 bg-orange-950/30' : 'border-gray-700 bg-gray-800/50'
+    }`}>
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm font-medium text-gray-200">{label}</div>
+          <div className={`text-sm font-medium ${disabled ? 'text-gray-500' : 'text-gray-200'}`}>{label}</div>
           <div className="text-xs text-gray-500">{description}</div>
+          {disabled && disabledReason && (
+            <div className="mt-1 text-xs text-yellow-500/80">{disabledReason}</div>
+          )}
         </div>
-        <label className="relative inline-flex cursor-pointer items-center">
-          <input type="checkbox" checked={enabled} onChange={(e) => onToggle(id, e.target.checked)} className="peer sr-only" />
-          <div className="peer h-6 w-11 rounded-full bg-gray-600 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all peer-checked:bg-orange-500 peer-checked:after:translate-x-full" />
+        <label className={`relative inline-flex items-center ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+          <input type="checkbox" checked={enabled} onChange={(e) => !disabled && onToggle(id, e.target.checked)} disabled={disabled} className="peer sr-only" />
+          <div className={`peer h-6 w-11 rounded-full after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all ${
+            disabled ? 'bg-gray-700' : 'bg-gray-600 peer-checked:bg-orange-500 peer-checked:after:translate-x-full'
+          }`} />
         </label>
       </div>
-      {enabled && children && <div className="mt-3 space-y-2">{children}</div>}
+      {enabled && !disabled && children && <div className="mt-3 space-y-2">{children}</div>}
     </div>
   );
 }
@@ -56,6 +76,24 @@ export default function WifiImpairmentPanel() {
     return res.json();
   }, []);
   const { data: state, refresh } = useApi<WifiImpairmentState>(fetcher, 5000);
+
+  const capsFetcher = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/wifi-impairments/capabilities');
+      return res.ok ? res.json() : null;
+    } catch { return null; }
+  }, []);
+  const { data: caps } = useApi<WifiCapabilities>(capsFetcher);
+
+  const isSupported = (featureId: string): boolean => {
+    if (!caps?.features) return true; // Default to enabled while loading
+    return caps.features[featureId]?.supported !== false;
+  };
+
+  const disabledReason = (featureId: string): string => {
+    if (!caps?.features) return '';
+    return caps.features[featureId]?.reason || '';
+  };
 
   const [config, setConfig] = useState<Record<string, Record<string, unknown>>>({
     channel_interference: { enabled: false, beacon_interval_ms: 100, rts_threshold: 2347 },
@@ -133,7 +171,8 @@ export default function WifiImpairmentPanel() {
 
       <div className="space-y-3">
         <ToggleRow label="Channel Interference" description="Simulate co-channel congestion via beacon interval and RTS threshold"
-          id="channel_interference" enabled={!!config.channel_interference?.enabled} onToggle={toggle}>
+          id="channel_interference" enabled={!!config.channel_interference?.enabled} onToggle={toggle}
+          disabled={!isSupported('channel_interference')} disabledReason={disabledReason('channel_interference')}>
           <Slider label="Beacon Interval" value={config.channel_interference?.beacon_interval_ms as number ?? 100}
             onChange={(v) => updateField('channel_interference', 'beacon_interval_ms', v)} min={15} max={2000} unit="ms" />
           <Slider label="RTS Threshold" value={config.channel_interference?.rts_threshold as number ?? 2347}
@@ -141,12 +180,14 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="TX Power Reduction" description="Reduce AP signal strength to simulate edge-of-coverage"
+          disabled={!isSupported('tx_power')} disabledReason={disabledReason('tx_power')}
           id="tx_power" enabled={!!config.tx_power?.enabled} onToggle={toggle}>
           <Slider label="TX Power" value={config.tx_power?.power_dbm as number ?? 20}
             onChange={(v) => updateField('tx_power', 'power_dbm', v)} min={0} max={30} unit="dBm" />
         </ToggleRow>
 
         <ToggleRow label="Band Switch / Channel Hop" description="One-shot switch, periodic band bouncing, or channel hopping"
+          disabled={!isSupported('band_switch')} disabledReason={disabledReason('band_switch')}
           id="band_switch" enabled={!!config.band_switch?.enabled} onToggle={toggle}>
           {/* One-shot switch */}
           <div className="mb-2 text-[10px] font-medium text-gray-500">One-shot switch</div>
@@ -228,6 +269,7 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="Deauthentication" description="Force client disconnect (one-shot)"
+          disabled={!isSupported('deauth')} disabledReason={disabledReason('deauth')}
           id="deauth" enabled={!!config.deauth?.enabled} onToggle={toggle}>
           <input value={config.deauth?.target_mac as string ?? ''} placeholder="MAC address (empty = all)"
             onChange={(e) => updateField('deauth', 'target_mac', e.target.value)}
@@ -235,6 +277,7 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="DHCP Disruption" description="Delay, fail, or change DHCP responses"
+          disabled={!isSupported('dhcp_disruption')} disabledReason={disabledReason('dhcp_disruption')}
           id="dhcp_disruption" enabled={!!config.dhcp_disruption?.enabled} onToggle={toggle}>
           <select value={config.dhcp_disruption?.mode as string ?? 'delay'}
             onChange={(e) => updateField('dhcp_disruption', 'mode', e.target.value)}
@@ -259,6 +302,7 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="Broadcast Storm" description="Inject broadcast traffic to consume WiFi airtime"
+          disabled={!isSupported('broadcast_storm')} disabledReason={disabledReason('broadcast_storm')}
           id="broadcast_storm" enabled={!!config.broadcast_storm?.enabled} onToggle={toggle}>
           <Slider label="Packets/sec" value={config.broadcast_storm?.packets_per_sec as number ?? 100}
             onChange={(v) => updateField('broadcast_storm', 'packets_per_sec', v)} min={1} max={10000} step={10} unit="pps" />
@@ -267,6 +311,7 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="Rate Limiting" description="Force lower WiFi PHY rates (simulate distance)"
+          disabled={!isSupported('rate_limit')} disabledReason={disabledReason('rate_limit')}
           id="rate_limit" enabled={!!config.rate_limit?.enabled} onToggle={toggle}>
           <Slider label="Max Legacy Rate" value={config.rate_limit?.legacy_rate_mbps as number ?? 54}
             onChange={(v) => updateField('rate_limit', 'legacy_rate_mbps', v)} min={1} max={54} unit="Mbps" />
@@ -275,6 +320,7 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
 
         <ToggleRow label="Periodic Disconnects" description="Schedule regular WiFi drops"
+          disabled={!isSupported('periodic_disconnect')} disabledReason={disabledReason('periodic_disconnect')}
           id="periodic_disconnect" enabled={!!config.periodic_disconnect?.enabled} onToggle={toggle}>
           <Slider label="Interval" value={config.periodic_disconnect?.interval_secs as number ?? 300}
             onChange={(v) => updateField('periodic_disconnect', 'interval_secs', v)} min={10} max={3600} step={10} unit="sec" />

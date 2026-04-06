@@ -15,6 +15,7 @@ from ..models.wifi_impairment import (
     WifiImpairmentState,
 )
 from ..services import wifi_impairment
+from ..services import hw_capabilities
 
 router = APIRouter(prefix="/api/v1/wifi-impairments", tags=["wifi-impairments"])
 
@@ -23,6 +24,13 @@ router = APIRouter(prefix="/api/v1/wifi-impairments", tags=["wifi-impairments"])
 async def get_state():
     """Get current WiFi impairment state."""
     return wifi_impairment.get_state()
+
+
+@router.get("/capabilities")
+async def get_capabilities():
+    """Get WiFi hardware capabilities for feature gating."""
+    caps = await hw_capabilities.detect_capabilities()
+    return caps.to_dict()
 
 
 @router.put("", response_model=WifiImpairmentState)
