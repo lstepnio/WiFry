@@ -63,11 +63,18 @@ touch "$PIGEN_DIR/stage3/SKIP" "$PIGEN_DIR/stage4/SKIP" "$PIGEN_DIR/stage5/SKIP"
 touch "$PIGEN_DIR/stage4/SKIP_IMAGES" "$PIGEN_DIR/stage5/SKIP_IMAGES"
 
 # Fix stage2 missing packages: some rpi-* packages don't exist in the repo
-# Remove them from the package list to prevent build failure
 STAGE2_PKGS="$PIGEN_DIR/stage2/01-sys-tweaks/00-packages"
 if [[ -f "$STAGE2_PKGS" ]]; then
     sed -i 's/rpi-swap//g; s/rpi-loop-utils//g; s/rpi-usb-gadget//g' "$STAGE2_PKGS"
     echo "Patched stage2 packages (removed unavailable rpi-* packages)"
+fi
+
+# Fix stage2 run script: rpi-resize.service doesn't exist, make enable calls non-fatal
+STAGE2_RUN="$PIGEN_DIR/stage2/01-sys-tweaks/01-run.sh"
+if [[ -f "$STAGE2_RUN" ]]; then
+    # Replace 'systemctl enable' with 'systemctl enable ... || true' to make missing services non-fatal
+    sed -i 's/systemctl enable \(.*\)$/systemctl enable \1 || true/g' "$STAGE2_RUN"
+    echo "Patched stage2 run script (non-fatal systemctl enable)"
 fi
 
 # Fix Debian GPG key issue: download fresh debian-archive-keyring and
