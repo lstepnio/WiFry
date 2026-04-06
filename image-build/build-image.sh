@@ -293,7 +293,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt --fix-broken install -y 2>/dev/null || true
 apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-    python3-venv hostapd dnsmasq bridge-utils \
+    python3-venv hostapd dnsmasq bridge-utils iptables \
     tshark wireless-tools iw ffmpeg v4l-utils \
     hping3 iperf3 wireguard-tools openvpn curl jq
 

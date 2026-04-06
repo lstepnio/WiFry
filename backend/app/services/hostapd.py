@@ -168,25 +168,28 @@ async def setup_ap_networking(interface: str = "") -> None:
         sudo=True, check=True,
     )
 
-    # NAT masquerade
-    await run(
+    # NAT masquerade (non-fatal — iptables may not be installed on first boot)
+    nat_result = await run(
         "iptables", "-t", "nat", "-A", "POSTROUTING",
         "-o", upstream, "-j", "MASQUERADE",
-        sudo=True, check=True,
+        sudo=True, check=False,
     )
-    await run(
-        "iptables", "-A", "FORWARD",
-        "-i", iface, "-o", upstream,
-        "-m", "state", "--state", "RELATED,ESTABLISHED",
-        "-j", "ACCEPT",
-        sudo=True, check=True,
-    )
-    await run(
-        "iptables", "-A", "FORWARD",
-        "-i", upstream, "-o", iface,
-        "-j", "ACCEPT",
-        sudo=True, check=True,
-    )
+    if not nat_result.success:
+        logger.warning("iptables NAT failed (iptables may not be installed): %s", nat_result.stderr)
+    else:
+        await run(
+            "iptables", "-A", "FORWARD",
+            "-i", iface, "-o", upstream,
+            "-m", "state", "--state", "RELATED,ESTABLISHED",
+            "-j", "ACCEPT",
+            sudo=True, check=False,
+        )
+        await run(
+            "iptables", "-A", "FORWARD",
+            "-i", upstream, "-o", iface,
+            "-j", "ACCEPT",
+            sudo=True, check=False,
+        )
 
     logger.info("AP networking configured: %s (%s) -> %s", iface, AP_IP, upstream)
 
