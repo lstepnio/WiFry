@@ -26,6 +26,15 @@ def _load() -> dict:
             _user_settings = json.loads(SETTINGS_PATH.read_text())
         except (json.JSONDecodeError, OSError):
             _user_settings = {}
+
+    # Apply saved keys to runtime config (survives restarts)
+    if "anthropic_api_key" in _user_settings:
+        settings.anthropic_api_key = _user_settings["anthropic_api_key"]
+    if "openai_api_key" in _user_settings:
+        settings.openai_api_key = _user_settings["openai_api_key"]
+    if "ai_provider" in _user_settings:
+        settings.ai_provider = _user_settings["ai_provider"]
+
     return _user_settings
 
 
