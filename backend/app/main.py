@@ -26,8 +26,13 @@ async def lifespan(app: FastAPI):
         logger.warning("Running in MOCK MODE — tc commands will be logged, not executed")
     else:
         # Apply saved network config (or safe defaults) on boot
-        from .services import network_config as nc_svc
-        await nc_svc.boot_apply()
+        # Non-fatal: backend must start even if hostapd/network config fails
+        try:
+            from .services import network_config as nc_svc
+            await nc_svc.boot_apply()
+        except Exception as e:
+            logger.error("boot_apply failed (non-fatal): %s", e)
+            logger.warning("Backend starting with degraded network config — check hostapd/dnsmasq manually")
     yield
 
     # --- Graceful shutdown: cancel background tasks, kill subprocesses ---
