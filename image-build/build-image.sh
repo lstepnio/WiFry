@@ -238,10 +238,45 @@ done
 mkdir -p /var/log/wifry
 chown -R "$WIFRY_USER:$WIFRY_USER" "$DATA_DIR" /var/log/wifry
 
-# Python venv
-sudo -u "$WIFRY_USER" python3 -m venv "$INSTALL_DIR/backend/.venv"
-sudo -u "$WIFRY_USER" "$INSTALL_DIR/backend/.venv/bin/pip" install --upgrade pip -q
-sudo -u "$WIFRY_USER" "$INSTALL_DIR/backend/.venv/bin/pip" install -r "$INSTALL_DIR/backend/requirements.txt" -q
+# Python venv — created in chroot but pip install done on first boot
+# (SSL is broken under QEMU ARM emulation, so we skip pip here)
+python3 -m venv "$INSTALL_DIR/backend/.venv" || true
+
+# Create first-boot script that installs pip dependencies on real hardware
+cat > /opt/wifry/setup/first-boot-pip.sh <<'PIPBOOT'
+#!/bin/bash
+# Runs once on first boot to install Python dependencies
+MARKER="/var/lib/wifry/.pip-installed"
+if [ ! -f "$MARKER" ]; then
+    echo "WiFry first boot: installing Python dependencies..."
+    /opt/wifry/backend/.venv/bin/pip install --upgrade pip -q
+    /opt/wifry/backend/.venv/bin/pip install -r /opt/wifry/backend/requirements.txt -q
+    touch "$MARKER"
+    echo "WiFry first boot: pip install complete"
+    systemctl restart wifry-backend
+fi
+PIPBOOT
+chmod +x /opt/wifry/setup/first-boot-pip.sh
+
+# Create systemd one-shot service for first-boot pip install
+cat > /etc/systemd/system/wifry-first-boot.service <<'FBSVC'
+[Unit]
+Description=WiFry First Boot - Install Python Dependencies
+After=network-online.target
+Wants=network-online.target
+Before=wifry-backend.service
+ConditionPathExists=!/var/lib/wifry/.pip-installed
+
+[Service]
+Type=oneshot
+ExecStart=/opt/wifry/setup/first-boot-pip.sh
+RemainAfterExit=yes
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+FBSVC
+systemctl enable wifry-first-boot.service
 
 # Sudoers
 install -m 0440 "$INSTALL_DIR/setup/wifry-sudoers" /etc/sudoers.d/wifry
