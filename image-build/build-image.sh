@@ -283,10 +283,11 @@ if [ "$(date +%Y)" -lt 2025 ]; then
 fi
 echo "Current time: $(date)"
 
-# Install system packages
+# Install system packages (noninteractive to suppress prompts like iperf3 daemon question)
 echo "Installing system packages..."
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq \
+apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
     python3-venv hostapd dnsmasq bridge-utils \
     tshark wireless-tools iw ffmpeg v4l-utils \
     hping3 iperf3 wireguard-tools openvpn curl jq
