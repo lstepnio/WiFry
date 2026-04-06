@@ -118,6 +118,16 @@ async def set_git_repo(url: str) -> dict:
     return {"status": "ok", "git_repo_url": url}
 
 
+# Load saved settings on import so API keys are available immediately
+# (before any endpoint is called)
+try:
+    _load()
+    if _user_settings:
+        logger.info("Loaded saved settings: %s", list(_user_settings.keys()))
+except Exception:
+    pass
+
+
 async def force_update() -> dict:
     """Force git pull and rebuild regardless of current state."""
     from . import updater
