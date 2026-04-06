@@ -72,9 +72,14 @@ fi
 # Fix stage2 run script: rpi-resize.service doesn't exist, make enable calls non-fatal
 STAGE2_RUN="$PIGEN_DIR/stage2/01-sys-tweaks/01-run.sh"
 if [[ -f "$STAGE2_RUN" ]]; then
-    # Replace 'systemctl enable' with 'systemctl enable ... || true' to make missing services non-fatal
     sed -i 's/systemctl enable \(.*\)$/systemctl enable \1 || true/g' "$STAGE2_RUN"
     echo "Patched stage2 run script (non-fatal systemctl enable)"
+fi
+
+# Skip cloud-init substage (rpi-cloud-init-mods package doesn't exist)
+if [[ -d "$PIGEN_DIR/stage2/04-cloud-init" ]]; then
+    touch "$PIGEN_DIR/stage2/04-cloud-init/SKIP"
+    echo "Skipped stage2/04-cloud-init (unavailable package)"
 fi
 
 # Fix Debian GPG key issue: download fresh debian-archive-keyring and
