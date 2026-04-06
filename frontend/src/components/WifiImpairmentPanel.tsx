@@ -239,13 +239,22 @@ export default function WifiImpairmentPanel() {
           <select value={config.dhcp_disruption?.mode as string ?? 'delay'}
             onChange={(e) => updateField('dhcp_disruption', 'mode', e.target.value)}
             className="rounded border border-gray-600 bg-gray-800 px-2 py-1 text-xs text-white">
-            <option value="delay">Delay Response</option>
-            <option value="fail">Fail (NAK)</option>
-            <option value="change_ip">Force New IP</option>
+            <option value="delay">Delay New Connections</option>
+            <option value="fail">Block All DHCP (new + renewals)</option>
+            <option value="change_ip">Force New IP Range</option>
           </select>
           {config.dhcp_disruption?.mode === 'delay' && (
-            <Slider label="Delay" value={config.dhcp_disruption?.delay_secs as number ?? 30}
-              onChange={(v) => updateField('dhcp_disruption', 'delay_secs', v)} min={1} max={300} unit="sec" />
+            <>
+              <Slider label="Delay" value={config.dhcp_disruption?.delay_secs as number ?? 30}
+                onChange={(v) => updateField('dhcp_disruption', 'delay_secs', v)} min={1} max={300} unit="sec" />
+              <p className="mt-1 text-xs text-gray-500">Delays DHCPDISCOVER only. Existing clients must forget the network or have leases cleared to be affected.</p>
+            </>
+          )}
+          {config.dhcp_disruption?.mode === 'fail' && (
+            <p className="mt-1 text-xs text-gray-500">Drops all DHCP replies via iptables. Affects both new connections and lease renewals.</p>
+          )}
+          {config.dhcp_disruption?.mode === 'change_ip' && (
+            <p className="mt-1 text-xs text-gray-500">Switches DHCP range so clients get a different IP subnet on renewal.</p>
           )}
         </ToggleRow>
 
