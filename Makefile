@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend install test test-coverage build deploy deploy-ssh restart-ssh logs-ssh status-ssh
+.PHONY: dev backend frontend install test test-coverage build deploy deploy-ssh update-ssh restart-ssh logs-ssh status-ssh verify-ssh ci-backend ci-backend-release-risk ci-frontend ci-deploy-smoke ci-release
 
 # ─── Development (local Mac) ─────────────────────────────────────────
 
@@ -8,23 +8,46 @@ dev:
 	@make frontend
 
 backend:
-	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+	cd backend && . .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 
 frontend:
 	cd frontend && npm run dev
 
 install:
-	cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+	cd backend && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 	cd frontend && npm install
 
 test:
-	cd backend && source .venv/bin/activate && python -m pytest tests/ -v
+	cd backend && . .venv/bin/activate && python -m pytest tests/ -v
 
 test-coverage:
-	cd backend && source .venv/bin/activate && python -m coverage run -m pytest tests/ -q && python -m coverage report --sort=cover
+	cd backend && . .venv/bin/activate && python -m coverage run -m pytest tests/ -q && python -m coverage report --sort=cover
 
 build:
 	cd frontend && npm run build
+
+ci-backend:
+	cd backend && . .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q --tb=short
+
+ci-backend-release-risk:
+	cd backend && . .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest \
+		tests/test_runtime_state_boundaries.py \
+		tests/test_storage_scheduler.py \
+		tests/test_sessions.py \
+		tests/test_captures.py \
+		tests/test_sharing.py \
+		tests/test_system.py \
+		tests/test_system_extended.py \
+		-q
+
+ci-frontend:
+	cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build
+
+ci-deploy-smoke:
+	bash -n setup/install.sh setup/wifry-recovery.sh image-build/build-image.sh
+	python3 tools/validate_release_paths.py
+
+ci-release: ci-backend ci-backend-release-risk ci-frontend ci-deploy-smoke
 
 # ─── Deployment to Raspberry Pi ──────────────────────────────────────
 #
@@ -68,7 +91,9 @@ update-ssh:
 	ssh $(RPI) "sudo rsync -a --delete \
 		--exclude '.venv' --exclude 'node_modules' \
 		/tmp/wifry-update/ /opt/wifry/ && \
-		sudo cp -r /tmp/wifry-update/frontend/dist /opt/wifry/frontend/dist && \
+		sudo rm -rf /opt/wifry/frontend/dist && \
+		sudo mkdir -p /opt/wifry/frontend/dist && \
+		sudo rsync -a --delete /tmp/wifry-update/frontend/dist/ /opt/wifry/frontend/dist/ && \
 		sudo chown -R wifry:wifry /opt/wifry && \
 		sudo systemctl restart wifry-backend && \
 		rm -rf /tmp/wifry-update"
@@ -89,4 +114,5 @@ status-ssh:
 
 verify-ssh:
 	ssh $(RPI) "curl -sf http://localhost:8080/api/v1/health && echo ' Backend OK' || echo ' Backend FAIL'"
+	ssh $(RPI) "curl -sf http://localhost:8080/ | grep -qi '<!doctype html>' && echo ' Frontend OK' || echo ' Frontend FAIL'"
 	ssh $(RPI) "curl -sf http://localhost:8080/api/v1/system/dependencies | python3 -m json.tool"

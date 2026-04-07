@@ -39,6 +39,16 @@ warn()  { echo -e "${YELLOW}[WiFry]${NC} $*"; }
 error() { echo -e "${RED}[WiFry]${NC} $*" >&2; }
 step()  { echo -e "\n${CYAN}${BOLD}── $* ──${NC}"; }
 
+sync_frontend_dist() {
+    local src_dir="$1"
+    local dest_dir="$INSTALL_DIR/frontend/dist"
+
+    rm -rf "$dest_dir"
+    mkdir -p "$dest_dir"
+    rsync -a --delete "$src_dir/" "$dest_dir/"
+    chown -R "$WIFRY_USER:$WIFRY_USER" "$dest_dir"
+}
+
 # Track timing
 START_TIME=$(date +%s)
 
@@ -211,8 +221,7 @@ step "Building frontend"
 # Check if pre-built dist exists (from laptop build)
 if [[ -d "$PROJECT_DIR/frontend/dist" ]]; then
     info "Using pre-built frontend from deploy..."
-    cp -r "$PROJECT_DIR/frontend/dist" "$INSTALL_DIR/frontend/dist"
-    chown -R "$WIFRY_USER:$WIFRY_USER" "$INSTALL_DIR/frontend/dist"
+    sync_frontend_dist "$PROJECT_DIR/frontend/dist"
 else
     info "Building frontend on RPi (this takes a few minutes)..."
     cd "$INSTALL_DIR/frontend"
@@ -389,8 +398,11 @@ check() {
 
 check "Backend API responding" "curl -sf http://localhost:8080/api/v1/health"
 check "Frontend bundle present" "test -f $INSTALL_DIR/frontend/dist/index.html"
+check "Frontend served by backend" "curl -sf http://localhost:8080/ | grep -qi '<!doctype html>'"
 check "hostapd running" "systemctl is-active hostapd"
 check "dnsmasq running" "systemctl is-active dnsmasq"
+check "Backend service enabled" "systemctl is-enabled wifry-backend"
+check "Recovery service enabled" "systemctl is-enabled wifry-recovery"
 check "WiFi AP IP set" "ip addr show $WLAN_IFACE | grep -q '192.168.4.1'"
 check "IP forwarding enabled" "sysctl net.ipv4.ip_forward | grep -q '= 1'"
 check "NAT rules set" "iptables -t nat -S | grep -q MASQUERADE"

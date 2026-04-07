@@ -44,6 +44,12 @@ fi
 
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR" "$MOUNT_DIR"
 
+if [[ ! -f "$PROJECT_DIR/frontend/dist/index.html" ]]; then
+    echo "ERROR: frontend/dist/index.html not found."
+    echo "Build the frontend first: cd frontend && npm run build"
+    exit 1
+fi
+
 # ─── Step 1: Download base RPi OS image ──────────────────────────────
 
 if [[ ! -f "$RPI_IMAGE_FILE" ]]; then
@@ -119,10 +125,8 @@ rsync -a --exclude '.venv' --exclude 'node_modules' --exclude '__pycache__' \
     --exclude '.git' --exclude '.pytest_cache' --exclude 'image-build' \
     "$PROJECT_DIR/" "$INSTALL_DIR/"
 
-# Copy pre-built frontend if available
-if [[ -d "$PROJECT_DIR/frontend/dist" ]]; then
-    cp -r "$PROJECT_DIR/frontend/dist" "$INSTALL_DIR/frontend/dist"
-fi
+mkdir -p "$INSTALL_DIR/frontend/dist"
+rsync -a --delete "$PROJECT_DIR/frontend/dist/" "$INSTALL_DIR/frontend/dist/"
 
 # Create data directories
 for dir in captures reports sessions segments bundles annotations \
@@ -223,7 +227,6 @@ cp "$INSTALL_DIR/setup/wifry-recovery.service" "$MOUNT_DIR/etc/systemd/system/"
 WANTS="$MOUNT_DIR/etc/systemd/system/multi-user.target.wants"
 mkdir -p "$WANTS"
 ln -sf /etc/systemd/system/wifry-backend.service "$WANTS/wifry-backend.service"
-# wifry-frontend (port 3000) is no longer used — FastAPI serves frontend on 8080
 ln -sf /etc/systemd/system/wifry-recovery.service "$WANTS/wifry-recovery.service"
 
 # Unmask and enable hostapd
