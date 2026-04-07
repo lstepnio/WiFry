@@ -54,9 +54,19 @@ def _parse_semver(tag: str) -> tuple:
 
 # --- Git repo management ---
 
+async def _ensure_safe_directory() -> None:
+    """Mark /opt/wifry as safe for git (avoids dubious ownership error)."""
+    await run("git", "config", "--global", "--add", "safe.directory", INSTALL_DIR,
+              check=False, timeout=5)
+
+
 async def ensure_git_repo() -> bool:
     """Ensure /opt/wifry has a git repo. Bootstrap if missing."""
     git_dir = Path(INSTALL_DIR) / ".git"
+
+    # Always ensure safe.directory is set (avoids "dubious ownership" errors)
+    await _ensure_safe_directory()
+
     if git_dir.is_dir():
         return True
 
