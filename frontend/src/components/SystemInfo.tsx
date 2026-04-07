@@ -59,7 +59,7 @@ export default function SystemInfo() {
     <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">System</h2>
 
-      <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-4 text-sm">
         <div>
           <div className="text-xs text-gray-500 dark:text-gray-400">Model</div>
           <div className="font-medium text-gray-900 dark:text-white">{info.model}</div>
@@ -74,6 +74,15 @@ export default function SystemInfo() {
           </div>
         )}
 
+        {info.uptime && (
+          <div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Uptime</div>
+            <div className="font-medium text-gray-900 dark:text-white">{info.uptime}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
         {info.load_avg && (
           <div>
             <div className="text-xs text-gray-500 dark:text-gray-400">CPU ({info.cpu_cores} cores)</div>
@@ -108,14 +117,6 @@ export default function SystemInfo() {
             </div>
           </div>
         )}
-
-        {info.uptime && (
-          <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">Uptime</div>
-            <div className="font-medium text-gray-900 dark:text-white">{info.uptime}</div>
-          </div>
-        )}
-
       </div>
 
       <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
