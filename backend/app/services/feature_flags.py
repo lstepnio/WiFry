@@ -28,7 +28,8 @@ DEFAULTS: Dict[str, dict] = {
     "impairments_profiles": {"enabled": True, "label": "Impairment Profiles", "description": "One-click presets for network + WiFi + DNS conditions", "category": "core"},
     "sessions": {"enabled": True, "label": "Test Sessions", "description": "Primary workflow for artifact correlation, support bundles, and supported sharing", "category": "core"},
     "captures": {"enabled": True, "label": "Packet Captures", "description": "tshark packet capture with BPF filters", "category": "core"},
-    "adb": {"enabled": True, "label": "ADB Device Control", "description": "Connect, shell, logcat, screenshot, bugreport for Android STBs", "category": "core"},
+    "adb": {"enabled": False, "label": "ADB Device Control", "description": "Connect, shell, logcat, screenshot, bugreport for Android STBs", "category": "core",
+        "disabled_reason": "Enable when an Android STB is connected via ADB over network."},
 
     # Analysis features — ready
     "ai_analysis": {"enabled": True, "label": "AI Capture Analysis", "description": "Anthropic Claude / OpenAI GPT analysis of packet captures", "category": "analysis"},
@@ -40,12 +41,12 @@ DEFAULTS: Dict[str, dict] = {
         "disabled_reason": "Requires CoreDNS binary. Installed by install.sh. Check System > Dependencies to verify."},
     "streams": {"enabled": True, "label": "Stream Monitoring", "description": "HLS/DASH stream analysis via mitmproxy transparent proxy.", "category": "advanced",
         "disabled_reason": "Requires mitmproxy (installed by install.sh) AND the mitmproxy CA certificate installed on the STB. Without the CA cert, HTTPS streams can't be inspected."},
-    "teleport": {"enabled": True, "label": "Teleport VPN", "description": "Geo-shift STB traffic through remote networks via VPN.", "category": "advanced",
-        "disabled_reason": "WireGuard/OpenVPN tools installed. You still need a VPN config file from your network/secops team to create a Teleport profile."},
+    "teleport": {"enabled": False, "label": "Teleport VPN", "description": "Geo-shift STB traffic through remote networks via VPN.", "category": "advanced",
+        "disabled_reason": "Requires a VPN config file from your network/secops team. Enable when ready to create a Teleport profile."},
     "speed_test_ookla": {"enabled": True, "label": "Ookla Speedtest", "description": "Official Ookla Speedtest CLI for real internet speed measurement.", "category": "tools",
         "disabled_reason": "Requires the Ookla Speedtest CLI binary. Installed by install.sh."},
-    "video_probe": {"enabled": True, "label": "Video Quality Probe", "description": "Analyze saved video segments for codec info, bitrate, and keyframe intervals.", "category": "advanced",
-        "disabled_reason": "Requires ffmpeg/ffprobe. Installed by install.sh."},
+    "video_probe": {"enabled": False, "label": "Video Quality Probe", "description": "Analyze saved video segments for codec info, bitrate, and keyframe intervals.", "category": "advanced",
+        "disabled_reason": "Enable when analyzing HLS/DASH streams or local media segments."},
 
     # Features needing physical hardware — disabled by default
     "hdmi_capture": {"enabled": False, "label": "HDMI Capture", "description": "Capture HDMI output from STBs for visual analysis.", "category": "advanced",
