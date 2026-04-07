@@ -178,14 +178,18 @@ async def handle_message(user_id: str, data: dict) -> None:
 
     if msg_type == "navigate":
         # User changed tab — sync to all
-        _shared_state["active_tab"] = data.get("tab", "sessions")
-        _shared_state["last_action"] = f"Navigated to {data.get('tab')}"
+        tab = data.get("tab", "sessions")
+        sub_tab = data.get("subTab")
+        _shared_state["active_tab"] = tab
+        _shared_state["active_sub_tab"] = sub_tab
+        _shared_state["last_action"] = f"Navigated to {tab}" + (f" > {sub_tab}" if sub_tab else "")
         _shared_state["last_action_by"] = user["name"]
         _shared_state["last_action_at"] = user["last_activity"]
 
         await _broadcast({
             "type": "navigate",
-            "tab": data.get("tab"),
+            "tab": tab,
+            "subTab": sub_tab,
             "by": user["name"],
         }, exclude=user_id if _mode == CollaborationMode.CO_PILOT else None)
 
