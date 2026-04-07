@@ -1,5 +1,6 @@
 """System router — RPi info, settings, reboot."""
 
+import logging
 import platform
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 
 from ..config import settings
 from ..utils.shell import run
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
