@@ -116,12 +116,14 @@ export default function CollabOverlay({ onNavigate }: { onNavigate?: (tab: strin
   };
 
   const userCount = status?.user_count ?? 0;
-  const remoteUserCount = (status?.connected_users ?? []).filter(u => !u.is_local).length;
   const mode = status?.mode ?? 'co-pilot';
   const modeInfo = MODE_LABELS[mode] || MODE_LABELS['co-pilot'];
 
-  // Only show overlay when there are remote (non-local) users connected
-  if (remoteUserCount <= 0 && !showPanel) return null;
+  // Each browser tab opens 2 WebSocket connections (Dashboard + CollabOverlay),
+  // so a single user shows as 2. Show overlay when there are more connections
+  // than just this tab (i.e., another browser/user is connected).
+  // With 1 tab: 2 connections. With 2 tabs: 4 connections.
+  if (userCount <= 2 && !showPanel) return null;
 
   return (
     <>
