@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import type { CaptureFilters, CaptureInfo } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
+import { useNotification } from '../hooks/useNotification';
 import SessionBadge from './SessionBadge';
 
 function formatBytes(bytes: number): string {
@@ -29,6 +31,8 @@ export default function CaptureManager({
 }: {
   onAnalyze: (captureId: string) => void;
 }) {
+  const confirmAction = useConfirm();
+  const { notify } = useNotification();
   const fetcher = useCallback(() => api.getCaptures(), []);
   const { data: captures, refresh } = useApi<CaptureInfo[]>(fetcher, 3000);
 
@@ -67,7 +71,7 @@ export default function CaptureManager({
       setFilterBpf('');
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to start capture');
+      notify(e instanceof Error ? e.message : 'Failed to start capture', 'error');
     } finally {
       setStarting(false);
     }
@@ -78,17 +82,17 @@ export default function CaptureManager({
       await api.stopCapture(id);
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to stop');
+      notify(e instanceof Error ? e.message : 'Failed to stop', 'error');
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this capture?')) return;
+    if (!await confirmAction({ title: 'Delete Capture', message: 'Delete this capture?', confirmLabel: 'Delete', confirmTone: 'danger' })) return;
     try {
       await api.deleteCapture(id);
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to delete');
+      notify(e instanceof Error ? e.message : 'Failed to delete', 'error');
     }
   };
 
@@ -106,7 +110,7 @@ export default function CaptureManager({
           {(captures ?? []).length > 0 && (
             <button
               onClick={async () => {
-                if (!confirm(`Delete all ${(captures ?? []).length} captures?`)) return;
+                if (!await confirmAction({ title: 'Delete All Captures', message: `Delete all ${(captures ?? []).length} captures?`, confirmLabel: 'Delete All', confirmTone: 'danger' })) return;
                 let failedDeletes = 0;
                 for (const c of (captures ?? [])) {
                   try {
@@ -116,7 +120,7 @@ export default function CaptureManager({
                   }
                 }
                 if (failedDeletes > 0) {
-                  alert(`Failed to delete ${failedDeletes} capture${failedDeletes === 1 ? '' : 's'}.`);
+                  notify(`Failed to delete ${failedDeletes} capture${failedDeletes === 1 ? '' : 's'}.`, 'error');
                 }
                 refresh();
               }}

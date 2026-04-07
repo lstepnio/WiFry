@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { useNotification } from '../hooks/useNotification';
 
 interface SessionSummary {
   id: string;
@@ -67,6 +69,8 @@ function formatBytes(b: number): string {
 }
 
 export default function SessionPanel() {
+  const confirmAction = useConfirm();
+  const { notify } = useNotification();
   const { isEnabled } = useFeatureFlags();
   const listFetcher = useCallback(async () => {
     const res = await fetch('/api/v1/sessions');
@@ -119,7 +123,7 @@ export default function SessionPanel() {
       setNewDeviceSerial('');
       refresh();
       refreshActive();
-    } catch { alert('Failed to create session'); }
+    } catch { notify('Failed to create session', 'error'); }
     finally { setCreating(false); }
   };
 
@@ -149,7 +153,7 @@ export default function SessionPanel() {
   const generateBundle = async (id: string) => {
     const res = await fetch(`/api/v1/sessions/${id}/bundle`, { method: 'POST' });
     const data = await res.json();
-    if (data.bundle_path) alert(`Bundle saved: ${data.bundle_path}`);
+    if (data.bundle_path) notify(`Bundle saved: ${data.bundle_path}`, 'success');
     if (selectedId === id) loadDetail(id);
   };
 
@@ -256,7 +260,7 @@ export default function SessionPanel() {
               </button>
             )}
             <button onClick={async () => {
-              if (!confirm(`DISCARD session "${detail.name}" and ALL its data files? This cannot be undone.`)) return;
+              if (!await confirmAction({ title: 'Discard Session', message: `DISCARD session "${detail.name}" and ALL its data files? This cannot be undone.`, confirmLabel: 'Discard', confirmTone: 'danger' })) return;
               await fetch(`/api/v1/sessions/${detail.id}/discard`, { method: 'POST' });
               setSelectedId(null); setDetail(null); refresh(); refreshActive();
             }}
@@ -329,7 +333,7 @@ export default function SessionPanel() {
           {(sessions ?? []).length > 0 && (
             <button
               onClick={async () => {
-                if (!confirm(`Delete all ${(sessions ?? []).length} sessions and their data?`)) return;
+                if (!await confirmAction({ title: 'Delete All Sessions', message: `Delete all ${(sessions ?? []).length} sessions and their data?`, confirmLabel: 'Delete All', confirmTone: 'danger' })) return;
                 await fetch('/api/v1/sessions/delete-all?discard_data=true', { method: 'POST' });
                 refresh(); refreshActive();
               }}

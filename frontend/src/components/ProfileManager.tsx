@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import type { Profile } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
+import { useNotification } from '../hooks/useNotification';
 
 const CATEGORY_COLORS: Record<string, string> = {
   network: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
@@ -12,6 +14,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function ProfileManager() {
+  const confirm = useConfirm();
+  const { notify } = useNotification();
   const fetcher = useCallback(() => api.getProfiles(), []);
   const { data, refresh } = useApi(fetcher);
   const [applying, setApplying] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export default function ProfileManager() {
       await api.applyProfile(name);
       window.dispatchEvent(new CustomEvent('wifry:refresh'));
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to apply profile');
+      notify(e instanceof Error ? e.message : 'Failed to apply profile', 'error');
     } finally {
       setApplying(null);
     }
@@ -38,29 +42,29 @@ export default function ProfileManager() {
 
   const handleDelete = async (profile: Profile) => {
     if (profile.builtin) return;
-    if (!confirm(`Delete profile "${profile.name}"?`)) return;
+    if (!await confirm({ title: 'Delete Profile', message: `Delete profile "${profile.name}"?`, confirmLabel: 'Delete', confirmTone: 'danger' })) return;
     try {
       await api.deleteProfile(profile.name);
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to delete');
+      notify(e instanceof Error ? e.message : 'Failed to delete', 'error');
     }
   };
 
   const handleDeleteAllCustom = async () => {
     const customProfiles = allProfiles.filter(p => !p.builtin);
     if (customProfiles.length === 0) {
-      alert('No custom profiles to delete.');
+      notify('No custom profiles to delete.', 'info');
       return;
     }
-    if (!confirm(`Delete all ${customProfiles.length} custom profile(s)? Built-in profiles will not be affected.`)) return;
+    if (!await confirm({ title: 'Delete All Custom Profiles', message: `Delete all ${customProfiles.length} custom profile(s)? Built-in profiles will not be affected.`, confirmLabel: 'Delete All', confirmTone: 'danger' })) return;
     try {
       for (const p of customProfiles) {
         await api.deleteProfile(p.name);
       }
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to delete some profiles');
+      notify(e instanceof Error ? e.message : 'Failed to delete some profiles', 'error');
       refresh();
     }
   };
@@ -109,7 +113,7 @@ export default function ProfileManager() {
         <div className="flex items-center gap-2">
           <button
             onClick={async () => {
-              if (!confirm('Clear ALL impairments (network, WiFi, DNS)? This will stop all active impairments.')) return;
+              if (!await confirm({ title: 'Clear All Impairments', message: 'Clear ALL impairments (network, WiFi, DNS)? This will stop all active impairments.', confirmLabel: 'Clear All', confirmTone: 'danger' })) return;
               try {
                 await Promise.all([
                   api.clearAllImpairments(),
@@ -117,7 +121,7 @@ export default function ProfileManager() {
                   fetch('/api/v1/dns/disable', { method: 'POST' }),
                 ]);
                 window.dispatchEvent(new CustomEvent('wifry:refresh'));
-              } catch { alert('Failed to clear some impairments'); }
+              } catch { notify('Failed to clear some impairments', 'error'); }
             }}
             className="rounded border border-yellow-300 px-3 py-1 text-xs font-medium text-yellow-600 hover:bg-yellow-50 dark:border-yellow-700 dark:text-yellow-400"
           >

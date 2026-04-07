@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { activateGremlin, deactivateGremlin, getGremlinStatus } from '../api/client';
+import { useNotification } from '../hooks/useNotification';
 import type { GremlinStatus } from '../types';
 
 const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
@@ -8,6 +9,7 @@ const INTENSITY_LABELS = ['', 'Mild', 'Medium', 'Severe', 'Extreme'];
 const INTENSITY_COLORS = ['', 'text-yellow-400', 'text-orange-400', 'text-red-400', 'text-red-600'];
 
 export default function Gremlin() {
+  const { notify } = useNotification();
   const [revealed, setRevealed] = useState(false);
   const [status, setStatus] = useState<GremlinStatus | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -50,7 +52,7 @@ export default function Gremlin() {
         setStatus(await activateGremlin(intensity));
       }
     } catch (e) {
-      alert('Gremlin error: ' + e);
+      notify('Gremlin error: ' + e, 'error');
     } finally {
       setToggling(false);
     }

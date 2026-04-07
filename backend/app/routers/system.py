@@ -253,39 +253,43 @@ async def reset_feature_flags():
 
 # --- Data Management ---
 
+# Items to preserve during factory reset (everything else is deleted).
+# This allowlist approach means new data stores are automatically cleaned
+# without requiring changes here — preventing the recurring regression where
+# new services add data directories that factory reset doesn't know about.
+_FACTORY_RESET_KEEP = {
+    ".first-boot-complete",  # First-boot marker for image setup
+    ".git",                  # Git repo for self-updates
+    "VERSION",               # Version file (managed by updater)
+}
+
+
 @router.delete("/data/all")
 async def delete_all_data():
-    """Full factory reset — delete ALL data, settings, and reset network config to defaults."""
+    """Full factory reset — delete ALL data, settings, and reset network config.
+
+    Uses an allowlist approach: scans the entire data directory and deletes
+    everything except a small set of system files. This ensures new data
+    stores are automatically cleaned without code changes.
+    """
     import shutil
     from ..services import audit_log
 
     base = Path("/var/lib/wifry") if not settings.mock_mode else Path("/tmp/wifry")
     deleted = {}
 
-    # Delete all data directories
-    data_dirs = [
-        "captures", "sessions", "segments", "reports", "annotations",
-        "adb-files", "hdmi-captures", "bundles", "speedtests",
-        "coredns", "teleport", "network-profiles",
-    ]
-    for d in data_dirs:
-        p = base / d
-        if p.exists():
-            count = sum(1 for f in p.rglob("*") if f.is_file())
-            shutil.rmtree(p, ignore_errors=True)
-            p.mkdir(parents=True, exist_ok=True)
-            deleted[d] = count
+    if base.exists():
+        for entry in sorted(base.iterdir()):
+            if entry.name in _FACTORY_RESET_KEEP:
+                continue
 
-    # Delete config files (settings, network config, feature flags, update backup)
-    config_files = [
-        "settings.json", "network_config.json", "feature_flags.json",
-        "update_backup.json", "dns_config.json",
-    ]
-    for f in config_files:
-        p = base / f
-        if p.exists():
-            p.unlink()
-            deleted[f] = 1
+            if entry.is_dir():
+                count = sum(1 for f in entry.rglob("*") if f.is_file())
+                shutil.rmtree(entry, ignore_errors=True)
+                deleted[entry.name] = count
+            elif entry.is_file():
+                entry.unlink(missing_ok=True)
+                deleted[entry.name] = 1
 
     # Reset network config to defaults
     try:
@@ -295,7 +299,7 @@ async def delete_all_data():
     except Exception as e:
         deleted["network_reset"] = f"failed: {e}"
 
-    # Fix captures dir permissions (tshark needs world-writable)
+    # Re-create captures dir with correct permissions (tshark needs world-writable)
     captures_dir = base / "captures"
     captures_dir.mkdir(parents=True, exist_ok=True)
     try:

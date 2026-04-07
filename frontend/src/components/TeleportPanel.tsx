@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
+import { useNotification } from '../hooks/useNotification';
 
 interface TeleportProfile {
   id: string;
@@ -33,6 +35,8 @@ interface VerifyResult {
 }
 
 export default function TeleportPanel() {
+  const confirmAction = useConfirm();
+  const { notify } = useNotification();
   const statusFetcher = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/teleport/status');
@@ -66,7 +70,7 @@ export default function TeleportPanel() {
     try {
       await fetch(`/api/v1/teleport/connect/${profileId}`, { method: 'POST' });
       refreshStatus();
-    } catch { alert('Connection failed'); }
+    } catch { notify('Connection failed', 'error'); }
     finally { setConnecting(false); }
   };
 
@@ -76,7 +80,7 @@ export default function TeleportPanel() {
       await fetch('/api/v1/teleport/disconnect', { method: 'POST' });
       refreshStatus();
       setVerifyResult(null);
-    } catch { alert('Disconnect failed'); }
+    } catch { notify('Disconnect failed', 'error'); }
     finally { setConnecting(false); }
   };
 
@@ -85,7 +89,7 @@ export default function TeleportPanel() {
     try {
       const res = await fetch('/api/v1/teleport/verify');
       setVerifyResult(await res.json());
-    } catch { alert('Verify failed'); }
+    } catch { notify('Verify failed', 'error'); }
     finally { setVerifying(false); }
   };
 
@@ -111,7 +115,7 @@ export default function TeleportPanel() {
   };
 
   const deleteProfile = async (id: string) => {
-    if (!confirm('Delete this teleport profile?')) return;
+    if (!await confirmAction({ title: 'Delete Profile', message: 'Delete this teleport profile?', confirmLabel: 'Delete', confirmTone: 'danger' })) return;
     await fetch(`/api/v1/teleport/profiles/${id}`, { method: 'DELETE' });
     refreshProfiles();
   };

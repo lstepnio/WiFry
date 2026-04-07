@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useNotification } from '../hooks/useNotification';
 
 interface DnsResolver { address: string; label: string; healthy: boolean; delay_ms: number; }
 interface DnsOverride { domain: string; record_type: string; value: string; }
@@ -27,6 +28,7 @@ function Slider({ label, value, onChange, min, max, step = 1, unit, title = '' }
 }
 
 export default function DnsPanel() {
+  const { notify } = useNotification();
   const statusFetcher = useCallback(async () => {
     try { const r = await fetch('/api/v1/dns/status'); return r.ok ? r.json() : null; } catch { return null; }
   }, []);
@@ -94,7 +96,7 @@ export default function DnsPanel() {
         body: JSON.stringify(buildConfig(enabled)),
       });
       refresh(); refreshConfig();
-    } catch { alert('Failed to apply DNS config'); }
+    } catch { notify('Failed to apply DNS config', 'error'); }
     finally { setApplying(false); }
   };
 

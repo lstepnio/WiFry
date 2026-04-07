@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getWifiScan } from '../api/client';
+import { useNotification } from '../hooks/useNotification';
 import type { WifiScanData } from '../types';
 
 function signalColor(dbm: number): string {
@@ -15,6 +16,7 @@ function signalBarWidth(dbm: number): number {
 }
 
 export default function WifiScanner() {
+  const { notify } = useNotification();
   const [data, setData] = useState<WifiScanData | null>(null);
   const [scanning, setScanning] = useState(false);
 
@@ -23,7 +25,7 @@ export default function WifiScanner() {
     try {
       setData(await getWifiScan());
     } catch {
-      alert('Scan failed');
+      notify('Scan failed', 'error');
     } finally {
       setScanning(false);
     }

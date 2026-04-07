@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import type { StreamSession } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useNotification } from '../hooks/useNotification';
 
 function formatBitrate(bps: number): string {
   if (bps >= 1000000) return `${(bps / 1000000).toFixed(1)} Mbps`;
@@ -138,6 +139,7 @@ export default function StreamDetail({
 }
 
 function SaveStreamButton({ session }: { sessionId: string; session: StreamSession }) {
+  const { notify } = useNotification();
   const [saving, setSaving] = useState(false);
 
   const saveToSession = async () => {
@@ -147,7 +149,7 @@ function SaveStreamButton({ session }: { sessionId: string; session: StreamSessi
       const res = await fetch('/api/v1/sessions/active');
       const active = await res.json();
       if (!active.active_session_id) {
-        alert('No active test session. Create one in the Sessions tab first.');
+        notify('No active test session. Create one in the Sessions tab first.', 'info');
         return;
       }
       await fetch(`/api/v1/sessions/${active.active_session_id}/artifacts`, {
@@ -173,8 +175,8 @@ function SaveStreamButton({ session }: { sessionId: string; session: StreamSessi
           tags: ['stream', session.stream_type],
         }),
       });
-      alert('Stream data saved to active session');
-    } catch { alert('Failed to save'); }
+      notify('Stream data saved to active session', 'success');
+    } catch { notify('Failed to save', 'error'); }
     finally { setSaving(false); }
   };
 
@@ -184,8 +186,8 @@ function SaveStreamButton({ session }: { sessionId: string; session: StreamSessi
       // Create a JSON snapshot and upload via file.io
       const snapshot = JSON.stringify(session, null, 2);
       navigator.clipboard.writeText(snapshot);
-      alert('Stream data copied to clipboard (JSON)');
-    } catch { alert('Failed'); }
+      notify('Stream data copied to clipboard (JSON)', 'success');
+    } catch { notify('Failed', 'error'); }
     finally { setSaving(false); }
   };
 
