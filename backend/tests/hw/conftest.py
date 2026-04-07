@@ -15,6 +15,12 @@ from .hw_capabilities import WifiCapabilities, detect_capabilities
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--hw-base-url",
+        action="store",
+        default="http://localhost:8080",
+        help="Base URL for the real backend under hardware test",
+    )
+    parser.addoption(
         "--hw-client-ip",
         action="store",
         default=None,
@@ -61,12 +67,24 @@ def client_ip(request) -> str:
 
 
 @pytest_asyncio.fixture
-async def api() -> httpx.AsyncClient:
+async def api(request) -> httpx.AsyncClient:
     """HTTP client pointing at the real running backend."""
+    base_url = request.config.getoption("--hw-base-url")
     async with httpx.AsyncClient(
-        base_url="http://localhost:8080",
+        base_url=base_url,
         timeout=30.0,
     ) as client:
+        try:
+            health = await client.get("/api/v1/health")
+        except httpx.HTTPError as exc:
+            pytest.fail(f"Hardware backend is unreachable at {base_url}: {exc}")
+
+        if health.status_code != 200:
+            pytest.fail(f"Hardware backend at {base_url} returned {health.status_code} for /api/v1/health")
+
+        if health.json().get("mock_mode") is True:
+            pytest.fail(f"Hardware backend at {base_url} is still running in mock mode")
+
         yield client
 
 

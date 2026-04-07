@@ -74,9 +74,14 @@ RPi deployment via SSH is **separate from the git workflow** and unrestricted.
 
 ## CI Gates
 
-- Backend: `pytest` in mock mode with 70% coverage minimum
-- Frontend: `tsc --noEmit` + `npm run build`
-- Both must pass before merge.
+- PR fast feedback:
+  - Backend: `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q`
+  - Backend release-risk: targeted runtime/session/capture/system/storage tests in mock mode
+  - Frontend: `cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build`
+- Coverage is informational only. Do not add synthetic tests just to satisfy a percentage target.
+- Release verification:
+  - Run the manual hardware readiness + smoke suite on a real WiFry box before tagging
+  - Run hardware integration checks with `--hw-client-ip` when a connected client is available
 
 ## Project Reference
 
