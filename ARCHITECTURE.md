@@ -34,7 +34,15 @@ WiFry is a Raspberry Pi-based WiFi hotspot that simulates adverse network condit
 | VPN / Teleport | WireGuard, OpenVPN, IPsec/strongSwan |
 | Backend | Python 3.11+ / FastAPI / uvicorn |
 | Frontend | React 18 + TypeScript + Vite + Tailwind CSS |
-| Sharing | Cloudflare Quick Tunnel, file.io |
+| Sharing | Session bundle links via `file.io`; experimental live access via Cloudflare Quick Tunnel |
+
+## Product Surface
+
+WiFry intentionally keeps the day-to-day operator workflow narrow:
+
+- **Supported workflow:** configure connectivity in **Network Config**, create a **Session**, collect artifacts into that session, then generate or share a session bundle.
+- **Experimental / opt-in:** **Live Remote Access** (Cloudflare Quick Tunnel) and **Collaboration Mode**. These are hidden behind feature flags and grouped under System rather than treated as the default sharing path.
+- **Backend-only compatibility surface:** **Scenario APIs** remain available for automation/testing, but they are not part of the supported primary UI workflow.
 
 ## Session Workflow
 
@@ -81,9 +89,9 @@ The recommended workflow for IP video testing:
    └─ SUMMARY.md with human-readable report
 
 9. SHARE
-   └─ Upload bundle to file.io (15min expiry, single download)
-   └─ Or start Cloudflare Tunnel for live access
-   └─ Collaboration mode: spectate or co-pilot
+   └─ Supported: generate an expiring support-bundle link from the Session detail view
+   └─ Experimental: start Cloudflare Tunnel for live remote access
+   └─ Experimental: enable collaboration mode only for temporary co-pilot sessions
 ```
 
 ## Boot Sequence
@@ -118,6 +126,7 @@ All endpoints under `/api/v1/`:
 | `/impairments` | tc netem control | GET, PUT /{iface}, DELETE |
 | `/wifi-impairments` | WiFi-layer impairments | GET, PUT, DELETE |
 | `/profiles` | Impairment presets | CRUD, POST /{name}/apply |
+| `/scenarios` | Automated scenario runs | experimental/backend-only CRUD + run endpoints |
 | `/sessions` | Test session correlation | CRUD, artifacts, bundles |
 | `/captures` | Packet capture + AI | start, stop, analyze |
 | `/streams` | HLS/DASH monitoring | list, detail, segments |
@@ -126,9 +135,9 @@ All endpoints under `/api/v1/`:
 | `/hdmi` | HDMI capture | frame, record |
 | `/wifi/scan` | WiFi environment | scan channels + networks |
 | `/speedtest` | iperf3 speed test | run, results |
-| `/tunnel` | Cloudflare tunnel | start, stop, status |
-| `/fileio` | file.io upload | upload, bundle, history |
-| `/collab` | Collaboration mode | status, mode, WebSocket |
+| `/tunnel` | Live remote access | experimental start, stop, status |
+| `/fileio` | Bundle link generation | expiring uploads + history |
+| `/collab` | Collaboration mode | experimental status, mode, WebSocket |
 | `/network-config` | WiFi AP + Ethernet config | current, apply, profiles |
 | `/system` | RPi info + settings | info, storage, update, logs |
 | `/annotations` | Notes + tags | CRUD |

@@ -2,6 +2,7 @@
  * Collaboration overlay — shows connected users and mode indicator.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 interface User {
   id: string;
@@ -22,22 +23,34 @@ const MODE_LABELS: Record<string, { label: string; color: string; desc: string }
 };
 
 export default function CollabOverlay() {
+  const { isEnabled } = useFeatureFlags();
   const [status, setStatus] = useState<CollabStatus | null>(null);
   const [showPanel, setShowPanel] = useState(false);
   const [lastAction] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const collaborationEnabled = isEnabled('collaboration');
 
   useEffect(() => {
+    if (!collaborationEnabled) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+
     const load = async () => {
       try {
         const res = await fetch('/api/v1/collab/status');
         if (res.ok) setStatus(await res.json());
-      } catch {}
+      } catch {
+        /* ignore polling failures */
+      }
     };
     load();
     pollRef.current = setInterval(load, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  }, [collaborationEnabled]);
 
   const setMode = async (mode: string) => {
     await fetch('/api/v1/collab/mode', {
@@ -51,6 +64,7 @@ export default function CollabOverlay() {
   const mode = status?.mode ?? 'co-pilot';
   const modeInfo = MODE_LABELS[mode] || MODE_LABELS['co-pilot'];
 
+  if (!collaborationEnabled) return null;
   if (userCount <= 1 && !showPanel) return null;
 
   return (

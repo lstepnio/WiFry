@@ -37,6 +37,16 @@ async def test_system_settings(client: AsyncClient):
     assert data["mock_mode"] is True
 
 
+async def test_feature_flags_default_surface(client: AsyncClient):
+    resp = await client.get("/api/v1/system/features")
+    assert resp.status_code == 200
+    flags = resp.json()
+    assert flags["sessions"]["enabled"] is True
+    assert flags["sharing_fileio"]["enabled"] is True
+    assert flags["sharing_tunnel"]["enabled"] is False
+    assert flags["collaboration"]["enabled"] is False
+
+
 # --- Network config ---
 
 async def test_network_config_current(client: AsyncClient):

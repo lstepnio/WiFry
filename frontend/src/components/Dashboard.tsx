@@ -31,21 +31,28 @@ import VideoProbe from './VideoProbe';
  * 3. ADB          — Device control
  * 4. Captures     — Packet capture + AI
  * 5. Streams      — HLS/DASH monitoring
- * 6. System       — Settings, sharing, tools (sub-tabs)
+ * 6. System       — Setup, remote access, and admin tools (sub-tabs)
  */
 
-type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'sharing' | 'system';
+type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'system';
+type LegacyTab = Tab | 'sharing';
 type ImpairmentSubTab = 'profiles' | 'network' | 'wifi' | 'dns' | 'teleport';
-type SystemSubTab = 'overview' | 'network' | 'tools' | 'settings';
+type SystemSubTab = 'overview' | 'network' | 'remote' | 'tools' | 'settings';
+type NavState = {
+  tab: Tab;
+  impSubTab: ImpairmentSubTab;
+  sysSubTab: SystemSubTab;
+  analyzingCaptureId: string | null;
+  selectedStreamId: string | null;
+};
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
-  { id: 'sessions', label: 'Sessions', desc: 'Create and manage test sessions' },
+  { id: 'sessions', label: 'Sessions', desc: 'Primary workflow for test evidence and bundle sharing' },
   { id: 'impairments', label: 'Impairments', desc: 'Control network conditions' },
   { id: 'adb', label: 'ADB', desc: 'Android device control' },
   { id: 'captures', label: 'Captures', desc: 'Packet capture + AI analysis' },
   { id: 'streams', label: 'Streams', desc: 'HLS/DASH stream monitoring' },
-  { id: 'sharing', label: 'Sharing', desc: 'Tunnel sharing, file uploads, collaboration' },
-  { id: 'system', label: 'System', desc: 'Settings and tools' },
+  { id: 'system', label: 'System', desc: 'Network setup, remote access, and admin tools' },
 ];
 
 const IMP_SUBTABS: { id: ImpairmentSubTab; label: string }[] = [
@@ -59,9 +66,34 @@ const IMP_SUBTABS: { id: ImpairmentSubTab; label: string }[] = [
 const SYS_SUBTABS: { id: SystemSubTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'network', label: 'Network Config' },
+  { id: 'remote', label: 'Remote Access' },
   { id: 'tools', label: 'Tools' },
   { id: 'settings', label: 'App Settings' },
 ];
+
+const DEFAULT_NAV_STATE: NavState = {
+  tab: 'sessions',
+  impSubTab: 'profiles',
+  sysSubTab: 'overview',
+  analyzingCaptureId: null,
+  selectedStreamId: null,
+};
+
+function normalizeNavState(state?: Omit<Partial<NavState>, 'tab'> & { tab?: LegacyTab } | null): NavState {
+  const legacySharingTab = state?.tab === 'sharing';
+
+  return {
+    tab: TABS.some((tab) => tab.id === state?.tab) ? (state?.tab as Tab) : legacySharingTab ? 'system' : DEFAULT_NAV_STATE.tab,
+    impSubTab: IMP_SUBTABS.some((tab) => tab.id === state?.impSubTab) ? (state?.impSubTab as ImpairmentSubTab) : DEFAULT_NAV_STATE.impSubTab,
+    sysSubTab: SYS_SUBTABS.some((tab) => tab.id === state?.sysSubTab)
+      ? (state?.sysSubTab as SystemSubTab)
+      : legacySharingTab
+        ? 'remote'
+        : DEFAULT_NAV_STATE.sysSubTab,
+    analyzingCaptureId: typeof state?.analyzingCaptureId === 'string' ? state.analyzingCaptureId : null,
+    selectedStreamId: typeof state?.selectedStreamId === 'string' ? state.selectedStreamId : null,
+  };
+}
 
 function SubTabNav<T extends string>({ tabs, active, onChange }: {
   tabs: { id: T; label: string }[];
@@ -96,10 +128,13 @@ export default function Dashboard() {
   const { isEnabled } = useFeatureFlags();
   const wsRef = useRef<WebSocket | null>(null);
   const isRemoteUpdate = useRef(false);
+  const sessionsEnabled = isEnabled('sessions');
+  const collaborationEnabled = isEnabled('collaboration');
+  const remoteAccessEnabled = isEnabled('sharing_tunnel') || collaborationEnabled;
 
   // Broadcast full navigation state on any change
   // This captures ALL navigation: tabs, sub-tabs, sub-sub-tabs, panel selections
-  const navStateRef = useRef({ tab: 'sessions', impSubTab: 'profiles', sysSubTab: 'overview', analyzingCaptureId: null as string | null, selectedStreamId: null as string | null });
+  const navStateRef = useRef<NavState>(DEFAULT_NAV_STATE);
 
   const broadcastNavState = useCallback(() => {
     if (isRemoteUpdate.current) {
@@ -146,6 +181,12 @@ export default function Dashboard() {
 
   // Collaboration WebSocket (auto-reconnect)
   useEffect(() => {
+    if (!collaborationEnabled) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      return;
+    }
+
     let alive = true;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 
@@ -161,12 +202,12 @@ export default function Dashboard() {
           if (msg.type === 'navigate' && msg.state) {
             // Apply full navigation state from remote user
             isRemoteUpdate.current = true;
-            const s = msg.state;
-            if (s.tab) setTab(s.tab);
-            if (s.impSubTab) setImpSubTab(s.impSubTab);
-            if (s.sysSubTab) setSysSubTab(s.sysSubTab);
-            if (s.analyzingCaptureId !== undefined) setAnalyzingCaptureId(s.analyzingCaptureId);
-            if (s.selectedStreamId !== undefined) setSelectedStreamId(s.selectedStreamId);
+            const s = normalizeNavState(msg.state);
+            setTab(s.tab);
+            setImpSubTab(s.impSubTab);
+            setSysSubTab(s.sysSubTab);
+            setAnalyzingCaptureId(s.analyzingCaptureId);
+            setSelectedStreamId(s.selectedStreamId);
             navStateRef.current = s;
           } else if (msg.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong' }));
@@ -183,10 +224,11 @@ export default function Dashboard() {
 
     connect();
     return () => { alive = false; clearTimeout(reconnectTimer); wsRef.current?.close(); wsRef.current = null; };
-  }, []);
+  }, [collaborationEnabled]);
 
   // Filter tabs based on feature flags
   const visibleTabs = TABS.filter(t => {
+    if (t.id === 'sessions' && !sessionsEnabled) return false;
     if (t.id === 'streams' && !isEnabled('streams')) return false;
     if (t.id === 'adb' && !isEnabled('adb')) return false;
     if (t.id === 'captures' && !isEnabled('captures')) return false;
@@ -202,7 +244,13 @@ export default function Dashboard() {
   });
 
   // Filter system sub-tabs
-  const visibleSysSubTabs = SYS_SUBTABS;
+  const visibleSysSubTabs = SYS_SUBTABS.filter(t => {
+    if (t.id === 'remote' && !remoteAccessEnabled) return false;
+    return true;
+  });
+  const currentTab = visibleTabs.some((visibleTab) => visibleTab.id === tab) ? tab : (visibleTabs[0]?.id ?? 'system');
+  const currentImpSubTab = visibleImpSubTabs.some((visibleSubTab) => visibleSubTab.id === impSubTab) ? impSubTab : (visibleImpSubTabs[0]?.id ?? 'profiles');
+  const currentSysSubTab = visibleSysSubTabs.some((visibleSubTab) => visibleSubTab.id === sysSubTab) ? sysSubTab : (visibleSysSubTabs[0]?.id ?? 'overview');
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -225,7 +273,7 @@ export default function Dashboard() {
                 title={t.desc}
                 onClick={() => handleTabChange(t.id)}
                 className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
-                  tab === t.id
+                  currentTab === t.id
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
                 }`}
@@ -244,25 +292,25 @@ export default function Dashboard() {
       <main className="mx-auto max-w-6xl p-6">
 
         {/* Sessions */}
-        {tab === 'sessions' && <SessionPanel />}
+        {currentTab === 'sessions' && <SessionPanel />}
 
         {/* Impairments — sub-tabbed, filtered by feature flags */}
-        {tab === 'impairments' && (
+        {currentTab === 'impairments' && (
           <div>
-            <SubTabNav tabs={visibleImpSubTabs} active={impSubTab} onChange={handleImpSubTabChange} />
-            {impSubTab === 'profiles' && isEnabled('impairments_profiles') && <ProfileManager />}
-            {impSubTab === 'network' && isEnabled('impairments_network') && <ImpairmentPanel />}
-            {impSubTab === 'wifi' && isEnabled('impairments_wifi') && <WifiImpairmentPanel />}
-            {impSubTab === 'dns' && isEnabled('dns_simulation') && <DnsPanel />}
-            {impSubTab === 'teleport' && isEnabled('teleport') && <TeleportPanel />}
+            <SubTabNav tabs={visibleImpSubTabs} active={currentImpSubTab} onChange={handleImpSubTabChange} />
+            {currentImpSubTab === 'profiles' && isEnabled('impairments_profiles') && <ProfileManager />}
+            {currentImpSubTab === 'network' && isEnabled('impairments_network') && <ImpairmentPanel />}
+            {currentImpSubTab === 'wifi' && isEnabled('impairments_wifi') && <WifiImpairmentPanel />}
+            {currentImpSubTab === 'dns' && isEnabled('dns_simulation') && <DnsPanel />}
+            {currentImpSubTab === 'teleport' && isEnabled('teleport') && <TeleportPanel />}
           </div>
         )}
 
         {/* ADB */}
-        {tab === 'adb' && isEnabled('adb') && <AdbPanel />}
+        {currentTab === 'adb' && isEnabled('adb') && <AdbPanel />}
 
         {/* Captures */}
-        {tab === 'captures' && (
+        {currentTab === 'captures' && (
           analyzingCaptureId ? (
             <CaptureAnalysis
               captureId={analyzingCaptureId}
@@ -276,7 +324,7 @@ export default function Dashboard() {
         )}
 
         {/* Streams */}
-        {tab === 'streams' && (
+        {currentTab === 'streams' && (
           selectedStreamId ? (
             <StreamDetail
               sessionId={selectedStreamId}
@@ -291,28 +339,26 @@ export default function Dashboard() {
           )
         )}
 
-        {/* Sharing */}
-        {tab === 'sharing' && <SharePanel />}
-
         {/* System — sub-tabbed, filtered by feature flags */}
-        {tab === 'system' && (
+        {currentTab === 'system' && (
           <div>
-            <SubTabNav tabs={visibleSysSubTabs} active={sysSubTab} onChange={handleSysSubTabChange} />
-            {sysSubTab === 'overview' && (
+            <SubTabNav tabs={visibleSysSubTabs} active={currentSysSubTab} onChange={handleSysSubTabChange} />
+            {currentSysSubTab === 'overview' && (
               <div className="space-y-6">
                 <SystemInfo />
                 <NetworkStatus />
               </div>
             )}
-            {sysSubTab === 'network' && <NetworkConfigPanel />}
-            {sysSubTab === 'tools' && (
+            {currentSysSubTab === 'network' && <NetworkConfigPanel />}
+            {currentSysSubTab === 'remote' && remoteAccessEnabled && <SharePanel />}
+            {currentSysSubTab === 'tools' && (
               <div className="space-y-6">
                 <HwValidationPanel />
                 <WifiScanner />
                 <SpeedTest />
               </div>
             )}
-            {sysSubTab === 'settings' && (
+            {currentSysSubTab === 'settings' && (
               <div className="space-y-6">
                 <SettingsPanel />
                 <FeatureFlagsPanel />

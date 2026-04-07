@@ -1,11 +1,11 @@
 """Feature flags for controlling which features are enabled.
 
-Allows disabling features that aren't ready for production while
-keeping the code in the codebase. Flags are persisted to disk
-and exposed via API so the frontend can hide disabled features.
+Flags define the product surface that should be visible by default.
+Supported workflows stay on; opt-in or environment-dependent tools can
+remain in the codebase while being hidden from the primary UI.
 
-Default states reflect what's RPi-ready vs what needs more testing.
-Admins can override any flag via the Settings UI or API.
+Flags are persisted to disk and exposed via API so the frontend can
+make conservative visibility decisions even during startup.
 """
 
 import json
@@ -26,7 +26,7 @@ DEFAULTS: Dict[str, dict] = {
     "impairments_network": {"enabled": True, "label": "Network Impairments", "description": "tc netem delay, jitter, loss, corruption, reorder, bandwidth", "category": "core"},
     "impairments_wifi": {"enabled": True, "label": "WiFi Impairments", "description": "Channel interference, TX power, band switch, deauth, DHCP disruption, broadcast storm, rate limit, periodic disconnect", "category": "core"},
     "impairments_profiles": {"enabled": True, "label": "Impairment Profiles", "description": "One-click presets for network + WiFi + DNS conditions", "category": "core"},
-    "sessions": {"enabled": True, "label": "Test Sessions", "description": "Artifact correlation, support bundles, sharing", "category": "core"},
+    "sessions": {"enabled": True, "label": "Test Sessions", "description": "Primary workflow for artifact correlation, support bundles, and supported sharing", "category": "core"},
     "captures": {"enabled": True, "label": "Packet Captures", "description": "tshark packet capture with BPF filters", "category": "core"},
     "adb": {"enabled": True, "label": "ADB Device Control", "description": "Connect, shell, logcat, screenshot, bugreport for Android STBs", "category": "core"},
 
@@ -51,11 +51,12 @@ DEFAULTS: Dict[str, dict] = {
     "hdmi_capture": {"enabled": False, "label": "HDMI Capture", "description": "Capture HDMI output from STBs for visual analysis.", "category": "advanced",
         "disabled_reason": "Requires an Elgato Cam Link 4K (or compatible UVC USB capture device) physically plugged into the RPi's USB port. v4l-utils is installed but no device detected."},
 
-    # Sharing features — ready
-    "sharing_tunnel": {"enabled": True, "label": "Cloudflare Tunnel", "description": "Share WiFry UI via temporary public URL", "category": "sharing", "disabled_reason": ""},
-    "sharing_fileio": {"enabled": True, "label": "file.io Upload", "description": "One-click file sharing with expiring links", "category": "sharing", "disabled_reason": ""},
-    "collaboration": {"enabled": True, "label": "Collaboration Mode", "description": "Real-time shadow/co-pilot mode for remote users via WebSocket sync.", "category": "sharing",
-        "disabled_reason": "Experimental feature. Uses WebSockets for real-time sync between multiple users connected via Cloudflare Tunnel."},
+    # Sharing features — supported path stays session-centric; live access is opt-in
+    "sharing_tunnel": {"enabled": False, "label": "Live Remote Access", "description": "Expose the WiFry UI through a temporary public URL for live troubleshooting.", "category": "sharing",
+        "disabled_reason": "Experimental surface. Off by default. Use Session bundles for standard evidence sharing."},
+    "sharing_fileio": {"enabled": True, "label": "Session Bundle Sharing", "description": "Generate expiring support-bundle links from Session details.", "category": "sharing", "disabled_reason": ""},
+    "collaboration": {"enabled": False, "label": "Live Collaboration", "description": "Real-time co-pilot navigation sync for remote users connected through the tunnel.", "category": "sharing",
+        "disabled_reason": "Experimental surface. Requires Live Remote Access and working WebSocket connectivity."},
 
     # Easter egg
     "gremlin": {"enabled": True, "label": "Network Chaos Mode", "description": "Konami code easter egg for non-deterministic chaos", "category": "fun"},

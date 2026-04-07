@@ -30,6 +30,7 @@ WIFRY_TMP_FILES = [
     "/tmp/wifry-settings.json",
     "/tmp/wifry-storage.json",
     "/tmp/wifry-network-config.json",
+    "/tmp/wifry-feature-flags.json",
 ]
 
 

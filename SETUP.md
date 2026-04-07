@@ -188,6 +188,19 @@ make verify-ssh RPI=pi@<rpi-ip>
 - Plug in HDMI monitor + USB keyboard
 - Press **Alt+F2** for the recovery console
 
+## First-Run Workflow
+
+After the box is reachable, use this order in the UI:
+
+1. **System > Network Config** — set the WiFi hotspot, Ethernet uplink, and any reusable boot profiles.
+2. **Sessions** — create a session before you capture packets, collect ADB artifacts, or analyze a stream.
+3. **Session detail > Bundle + Share** — use this as the supported sharing path when you need to hand off evidence.
+
+### Experimental Surfaces
+
+- **System > Remote Access** is an opt-in, experimental live troubleshooting surface for Cloudflare Tunnel and collaboration.
+- **Scenario APIs** remain available for automation/testing, but there is no supported primary UI workflow for them.
+
 ---
 
 ## Quick Reference

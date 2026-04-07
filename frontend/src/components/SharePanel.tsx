@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 interface TunnelStatus {
   active: boolean;
@@ -9,61 +10,94 @@ interface TunnelStatus {
   message: string;
 }
 
-interface UploadResult {
-  success: boolean;
-  link?: string;
-  filename?: string;
-  size_bytes?: number;
-  files_bundled?: number;
-  expires?: string;
-  uploaded_at?: string;
-  error?: string;
+interface User {
+  id: string;
+  name: string;
+  ip: string;
+  connected_at: string;
 }
 
-const CATEGORIES = ['captures', 'reports', 'logs', 'hdmi', 'segments'] as const;
-const EXPIRY_OPTIONS = [
-  { value: '15m', label: '15 minutes' },
-  { value: '30m', label: '30 minutes' },
-  { value: '1h', label: '1 hour' },
-  { value: '6h', label: '6 hours' },
-  { value: '12h', label: '12 hours' },
-  { value: '1d', label: '1 day' },
-] as const;
+interface CollabStatus {
+  mode: string;
+  connected_users: User[];
+  user_count: number;
+}
+
+const MODE_LABELS: Record<string, { label: string; desc: string }> = {
+  'co-pilot': { label: 'Co-Pilot', desc: 'Anyone on the tunnel can drive the UI.' },
+  download: { label: 'Download Only', desc: 'Remote users can inspect and download, but not co-drive.' },
+};
 
 export default function SharePanel() {
-  const fetcher = useCallback(async () => {
+  const { isEnabled } = useFeatureFlags();
+  const liveRemoteAccessEnabled = isEnabled('sharing_tunnel');
+  const collaborationEnabled = isEnabled('collaboration');
+  const bundleSharingEnabled = isEnabled('sharing_fileio');
+
+  const tunnelFetcher = useCallback(async () => {
+    if (!liveRemoteAccessEnabled) {
+      return {
+        active: false,
+        url: null,
+        started_at: null,
+        share_url: null,
+        message: 'Live remote access is disabled.',
+      };
+    }
+
     const res = await fetch('/api/v1/tunnel/status');
     return res.json();
-  }, []);
-  const { data: status, refresh } = useApi<TunnelStatus>(fetcher, 5000);
+  }, [liveRemoteAccessEnabled]);
+  const { data: status, refresh } = useApi<TunnelStatus>(tunnelFetcher, liveRemoteAccessEnabled ? 5000 : undefined);
 
-  const historyFetcher = useCallback(async () => {
-    const res = await fetch('/api/v1/fileio/history');
+  const collabFetcher = useCallback(async () => {
+    if (!collaborationEnabled) {
+      return { mode: 'download', connected_users: [], user_count: 0 };
+    }
+
+    const res = await fetch('/api/v1/collab/status');
     return res.json();
-  }, []);
-  const { data: history, refresh: refreshHistory } = useApi<UploadResult[]>(historyFetcher);
+  }, [collaborationEnabled]);
+  const { data: collabStatus, refresh: refreshCollab } = useApi<CollabStatus>(collabFetcher, collaborationEnabled ? 3000 : undefined);
 
   const [toggling, setToggling] = useState(false);
   const [copied, setCopied] = useState('');
-  const [uploading, setUploading] = useState<string | null>(null);
-  const [lastUpload, setLastUpload] = useState<UploadResult | null>(null);
-  const [expiry, setExpiry] = useState('15m');
+  const [updatingMode, setUpdatingMode] = useState<string | null>(null);
 
   const toggleTunnel = async () => {
+    if (!liveRemoteAccessEnabled) return;
+
     setToggling(true);
     try {
       const endpoint = status?.active ? 'stop' : 'start';
       await fetch(`/api/v1/tunnel/${endpoint}`, { method: 'POST' });
       refresh();
-    } catch { alert('Tunnel error'); }
-    finally { setToggling(false); }
+      refreshCollab();
+    } catch {
+      alert('Tunnel error');
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const setMode = async (mode: string) => {
+    setUpdatingMode(mode);
+    try {
+      await fetch('/api/v1/collab/mode', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      refreshCollab();
+    } finally {
+      setUpdatingMode(null);
+    }
   };
 
   const copyUrl = (url: string, id: string) => {
     try {
       navigator.clipboard.writeText(url);
     } catch {
-      // Fallback for non-HTTPS contexts
       const ta = document.createElement('textarea');
       ta.value = url;
       ta.style.position = 'fixed';
@@ -73,134 +107,115 @@ export default function SharePanel() {
       document.execCommand('copy');
       document.body.removeChild(ta);
     }
+
     setCopied(id);
     setTimeout(() => setCopied(''), 2000);
   };
 
-  const uploadCategory = async (category: string) => {
-    setUploading(category);
-    setLastUpload(null);
-    try {
-      const res = await fetch('/api/v1/fileio/upload-category', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, expires: expiry }),
-      });
-      const data = await res.json();
-      setLastUpload(data);
-      refreshHistory();
-    } catch { alert('Upload failed'); }
-    finally { setUploading(null); }
-  };
-
   return (
     <div className="space-y-4">
-      {/* Cloudflare Tunnel */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Share Diagnostics</h2>
-            <p className="text-xs text-gray-500">Share data with your team via tunnel or file upload</p>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Remote Access</h2>
+          <p className="text-xs text-gray-500">
+            Supported sharing happens from Sessions using a single support bundle. The controls below are opt-in tools for temporary live troubleshooting.
+          </p>
         </div>
 
-        {/* Cloudflare Tunnel Section */}
-        <div className="mb-4 rounded-lg border border-gray-700 bg-gray-800/50 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-gray-300">Cloudflare Quick Tunnel</h3>
-            <button onClick={toggleTunnel} disabled={toggling}
-              className={`rounded-lg px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${status?.active ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}>
-              {toggling ? '...' : status?.active ? 'Stop' : 'Start Tunnel'}
-            </button>
+        <div className={`rounded-lg border p-4 ${bundleSharingEnabled ? 'border-green-700 bg-green-950/30' : 'border-yellow-700 bg-yellow-950/30'}`}>
+          <div className={`text-sm font-medium ${bundleSharingEnabled ? 'text-green-300' : 'text-yellow-300'}`}>
+            {bundleSharingEnabled ? 'Supported workflow: Session bundle sharing' : 'Session bundle sharing is disabled'}
           </div>
-          {status?.active && status.url ? (
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded bg-gray-900 px-3 py-1.5 font-mono text-xs text-green-300">{status.url}</code>
-              <button onClick={() => copyUrl(status.url!, 'tunnel')}
-                className="rounded bg-green-600 px-2 py-1.5 text-xs text-white hover:bg-green-700">
-                {copied === 'tunnel' ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-gray-500">Creates a live tunnel for real-time browsing of all diagnostics. Requires cloudflared.</p>
-          )}
-        </div>
-
-        {/* File.io Upload Section */}
-        <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4">
-          <h3 className="mb-2 text-sm font-medium text-gray-300">Quick Upload (file.io)</h3>
-          <div className="mb-3 flex items-center gap-2">
-            <span className="text-xs text-gray-500">Link expires in:</span>
-            <select value={expiry} onChange={(e) => setExpiry(e.target.value)}
-              className="rounded border border-gray-600 bg-gray-800 px-2 py-1 text-xs text-white">
-              {EXPIRY_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <span className="text-xs text-gray-600">Single-use download link</span>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {CATEGORIES.map(cat => (
-              <button
-                key={cat}
-                onClick={() => uploadCategory(cat)}
-                disabled={uploading === cat}
-                className="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium capitalize text-gray-300 hover:bg-gray-600 disabled:opacity-50"
-              >
-                {uploading === cat ? 'Uploading...' : `Upload ${cat}`}
-              </button>
-            ))}
-          </div>
-
-          {/* Last upload result */}
-          {lastUpload && (
-            <div className={`mt-3 rounded-lg p-3 ${lastUpload.success ? 'border border-green-700 bg-green-950/30' : 'border border-red-700 bg-red-950/30'}`}>
-              {lastUpload.success ? (
-                <>
-                  <div className="mb-1 text-xs font-medium text-green-400">Upload successful!</div>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 rounded bg-gray-900 px-3 py-1.5 font-mono text-xs text-green-300">{lastUpload.link}</code>
-                    <button onClick={() => copyUrl(lastUpload.link!, 'fileio')}
-                      className="rounded bg-green-600 px-2 py-1.5 text-xs text-white hover:bg-green-700">
-                      {copied === 'fileio' ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
-                  <div className="mt-1 text-xs text-gray-500">
-                    {lastUpload.filename}
-                    {lastUpload.files_bundled ? ` (${lastUpload.files_bundled} files)` : ''}
-                    {' — expires in '}{lastUpload.expires}
-                    {' — single-use download link'}
-                  </div>
-                </>
-              ) : (
-                <div className="text-xs text-red-400">{lastUpload.error}</div>
-              )}
-            </div>
-          )}
+          <p className={`mt-1 text-xs ${bundleSharingEnabled ? 'text-green-200' : 'text-yellow-200'}`}>
+            {bundleSharingEnabled
+              ? 'Create or open a Session, collect artifacts there, then use "Bundle + Share" from the session detail to generate one expiring link with the full test context.'
+              : 'Live remote access can still be enabled below, but the recommended support-bundle flow is currently turned off in feature flags.'}
+          </p>
         </div>
       </div>
 
-      {/* Upload history */}
-      {(history ?? []).length > 0 && (
+      {liveRemoteAccessEnabled && (
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-          <h3 className="mb-3 text-sm font-medium text-gray-500 dark:text-gray-400">Recent Uploads</h3>
-          <div className="space-y-2">
-            {(history ?? []).slice(0, 10).map((u, i) => (
-              <div key={i} className="flex items-center justify-between rounded border border-gray-700 bg-gray-800/50 px-3 py-2">
-                <div>
-                  <span className="text-xs font-medium text-gray-300">{u.filename}</span>
-                  {u.files_bundled && <span className="ml-2 text-xs text-gray-500">({u.files_bundled} files)</span>}
-                  <div className="text-[10px] text-gray-500">{u.uploaded_at ? new Date(u.uploaded_at).toLocaleString() : ''}</div>
-                </div>
-                {u.link && (
-                  <button onClick={() => copyUrl(u.link!, `h-${i}`)}
-                    className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-300 hover:bg-gray-600">
-                    {copied === `h-${i}` ? 'Copied!' : 'Copy Link'}
-                  </button>
-                )}
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Live Remote Access</h3>
+              <p className="text-xs text-gray-500">
+                Experimental. Opens the WiFry UI through Cloudflare Quick Tunnel for short-lived remote troubleshooting.
+              </p>
+            </div>
+            <button
+              onClick={toggleTunnel}
+              disabled={toggling}
+              className={`rounded-lg px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${status?.active ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+            >
+              {toggling ? '...' : status?.active ? 'Stop Tunnel' : 'Start Tunnel'}
+            </button>
+          </div>
+
+          {status?.active && status.url ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded bg-gray-900 px-3 py-1.5 font-mono text-xs text-green-300">{status.url}</code>
+                <button
+                  onClick={() => copyUrl(status.url!, 'tunnel')}
+                  className="rounded bg-green-600 px-2 py-1.5 text-xs text-white hover:bg-green-700"
+                >
+                  {copied === 'tunnel' ? 'Copied!' : 'Copy'}
+                </button>
               </div>
+              <p className="text-xs text-gray-500">
+                Remote users will see the live UI. Prefer Sessions for durable evidence sharing and use the tunnel only when someone needs to inspect the box in real time.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500">
+              Tunnel access is off. Start it only when you need a live troubleshooting session, then stop it when you are done.
+            </p>
+          )}
+        </div>
+      )}
+
+      {collaborationEnabled && (
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Live Collaboration</h3>
+          <p className="mt-1 text-xs text-gray-500">
+            Experimental. This synchronizes navigation for remote users connected through the live tunnel.
+          </p>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {Object.entries(MODE_LABELS).map(([mode, info]) => (
+              <button
+                key={mode}
+                onClick={() => setMode(mode)}
+                disabled={updatingMode === mode}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+                  (collabStatus?.mode ?? 'download') === mode
+                    ? 'bg-blue-600 text-white'
+                    : 'border border-gray-300 text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800'
+                }`}
+              >
+                {info.label}
+              </button>
             ))}
+          </div>
+
+          <p className="mt-2 text-xs text-gray-500">
+            {MODE_LABELS[collabStatus?.mode ?? 'download']?.desc ?? MODE_LABELS.download.desc}
+          </p>
+
+          <div className="mt-4 rounded border border-gray-700 bg-gray-800/40 px-3 py-2">
+            <div className="text-xs text-gray-400">
+              Connected users: <span className="font-medium text-gray-200">{collabStatus?.user_count ?? 0}</span>
+            </div>
+            {(collabStatus?.connected_users ?? []).length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(collabStatus?.connected_users ?? []).map((user) => (
+                  <span key={user.id} className="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-200">
+                    {user.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -16,12 +16,13 @@ interface FeatureFlag {
 type Flags = Record<string, FeatureFlag>;
 
 const CATEGORY_ORDER = ['core', 'analysis', 'tools', 'advanced', 'sharing', 'fun'];
+const EXPERIMENTAL_FLAGS = new Set(['sharing_tunnel', 'collaboration']);
 const CATEGORY_LABELS: Record<string, string> = {
   core: 'Core Features',
   analysis: 'Analysis',
   tools: 'Tools',
   advanced: 'Advanced (Hardware Required)',
-  sharing: 'Sharing',
+  sharing: 'Sharing & Remote Access',
   fun: 'Easter Eggs',
 };
 
@@ -37,7 +38,9 @@ export default function FeatureFlagsPanel() {
     try {
       await fetch(`/api/v1/system/features/${key}?enabled=${enabled}`, { method: 'PUT' });
       refresh();
-    } catch {}
+    } catch {
+      /* ignore toggle failures; the next refresh keeps UI consistent */
+    }
     finally { setToggling(null); }
   };
 
@@ -62,7 +65,7 @@ export default function FeatureFlagsPanel() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Feature Flags</h2>
-          <p className="text-xs text-gray-500">Enable or disable features. Disabled features are hidden from the UI.</p>
+          <p className="text-xs text-gray-500">Supported workflows stay on by default. Use these flags to opt into or hide additional surfaces.</p>
         </div>
         <button onClick={resetDefaults}
           className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800">
@@ -79,6 +82,11 @@ export default function FeatureFlagsPanel() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-200">{flag.label}</span>
+                    {EXPERIMENTAL_FLAGS.has(key) && (
+                      <span className="rounded bg-yellow-900 px-1.5 py-0.5 text-[9px] font-bold text-yellow-300">
+                        EXPERIMENTAL
+                      </span>
+                    )}
                     <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${flag.enabled ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}>
                       {flag.enabled ? 'ON' : 'OFF'}
                     </span>
