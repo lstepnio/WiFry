@@ -44,6 +44,22 @@ WiFry intentionally keeps the day-to-day operator workflow narrow:
 - **Experimental / opt-in:** **Live Remote Access** (Cloudflare Quick Tunnel) and **Collaboration Mode**. These are hidden behind feature flags and grouped under System rather than treated as the default sharing path.
 - **Backend-only compatibility surface:** **Scenario APIs** remain available for automation/testing, but they are not part of the supported primary UI workflow.
 
+## Runtime State Boundaries
+
+WiFry now treats critical runtime state in two explicit buckets so restart behavior is predictable:
+
+| State | Boundary | Restart Behavior |
+|-------|----------|------------------|
+| Session records, artifact metadata | Persistent on disk | Restored |
+| Active session pointer for auto-linking | Persistent on disk | Restored |
+| Capture metadata / AI analysis results | Persistent on disk | Restored |
+| Collaboration mode (`co-pilot` vs `download`) | Persistent on disk | Restored |
+| Live tshark subprocess handles | In memory only | Not restored; stale `running` captures are reconciled to `error` |
+| Connected collaboration users / shared navigation state | In memory only | Not restored; clients reconnect and resync |
+| Cloudflare tunnel process and public URL | In memory only | Not restored; operator must restart the tunnel |
+
+This keeps durable operator intent and artifact inventory on disk without pretending that live process handles, WebSockets, or public tunnel URLs can be safely recovered after a backend restart.
+
 ## Session Workflow
 
 The recommended workflow for IP video testing:

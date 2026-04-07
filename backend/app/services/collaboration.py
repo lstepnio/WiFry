@@ -2,7 +2,10 @@
 
 Modes:
   - co-pilot: Anyone can drive — all users see the same state, anyone can interact
-  - download: Download-only — tunnel exposes file share endpoints only
+  - download: Download-only — live access is limited to file sharing
+
+Only the selected mode survives a backend restart. Live users, WebSocket
+connections, and shared navigation state are intentionally ephemeral.
 """
 
 import asyncio
@@ -14,50 +17,73 @@ from typing import Dict, Optional
 
 from fastapi import WebSocket
 
+from ..models.collaboration import (
+    CollaborationMode,
+    CollaborationPersistentState,
+    CollaborationSharedState,
+    CollaborationStatus,
+    CollaborationUser,
+)
+from . import runtime_state
+
 logger = logging.getLogger(__name__)
 
-
-class CollaborationMode:
-    CO_PILOT = "co-pilot"    # Anyone can drive
-    DOWNLOAD = "download"    # File share only
-
-
-_mode: str = CollaborationMode.CO_PILOT
-_connected_users: Dict[str, dict] = {}
+_mode: CollaborationMode = CollaborationMode.CO_PILOT
+_mode_loaded = False
+_connected_users: Dict[str, CollaborationUser] = {}
 _websockets: Dict[str, WebSocket] = {}
-_shared_state: dict = {
-    "active_tab": "sessions",
-    "active_sub_tab": None,
-    "last_action": None,
-    "last_action_by": None,
-    "last_action_at": None,
-}
+_shared_state = CollaborationSharedState().model_dump(mode="json")
 _heartbeat_task: Optional[asyncio.Task] = None
 HEARTBEAT_INTERVAL = 15
 INACTIVITY_TIMEOUT = 60
+_COLLAB_STATE_KEY = "collaboration"
+
+
+def _load_mode() -> None:
+    global _mode, _mode_loaded
+
+    if _mode_loaded:
+        return
+
+    _mode_loaded = True
+    state = runtime_state.load_model(_COLLAB_STATE_KEY, CollaborationPersistentState)
+    if state:
+        _mode = state.mode
+
+
+def _save_mode(mode: CollaborationMode) -> None:
+    global _mode, _mode_loaded
+    _mode = mode
+    _mode_loaded = True
+    runtime_state.save_model(_COLLAB_STATE_KEY, CollaborationPersistentState(mode=mode))
 
 
 def get_mode() -> str:
-    return _mode
+    _load_mode()
+    return _mode.value
 
 
 def set_mode(mode: str) -> dict:
-    global _mode
-    if mode not in (CollaborationMode.CO_PILOT, CollaborationMode.DOWNLOAD):
-        raise ValueError(f"Invalid mode: {mode}. Use: co-pilot, download")
-    _mode = mode
-    logger.info("Collaboration mode set to: %s", mode)
-    asyncio.create_task(_broadcast({"type": "mode_change", "mode": mode}))
+    _load_mode()
+    try:
+        resolved_mode = CollaborationMode(mode)
+    except ValueError as exc:
+        raise ValueError(f"Invalid mode: {mode}. Use: co-pilot, download") from exc
+
+    _save_mode(resolved_mode)
+    logger.info("Collaboration mode set to: %s", resolved_mode.value)
+    asyncio.create_task(_broadcast({"type": "mode_change", "mode": resolved_mode.value}))
     return get_status()
 
 
 def get_status() -> dict:
-    return {
-        "mode": _mode,
-        "connected_users": list(_connected_users.values()),
-        "user_count": len(_connected_users),
-        "shared_state": _shared_state,
-    }
+    _load_mode()
+    return CollaborationStatus(
+        mode=_mode,
+        connected_users=list(_connected_users.values()),
+        user_count=len(_connected_users),
+        shared_state=_shared_state,
+    ).model_dump(mode="json")
 
 
 # --- Heartbeat ---
@@ -75,7 +101,7 @@ async def _heartbeat_loop() -> None:
                 stale.append(uid)
                 continue
             try:
-                last = datetime.fromisoformat(user["last_activity"])
+                last = datetime.fromisoformat(user.last_activity)
                 if (now - last).total_seconds() > INACTIVITY_TIMEOUT:
                     stale.append(uid)
                     continue
@@ -101,6 +127,7 @@ def _ensure_heartbeat() -> None:
 
 async def connect_user(ws: WebSocket, name: str = "", ip: str = "") -> str:
     """Register a new connected user."""
+    _load_mode()
     _ensure_heartbeat()
     user_id = uuid.uuid4().hex[:8]
     now = datetime.now(timezone.utc).isoformat()
@@ -109,13 +136,13 @@ async def connect_user(ws: WebSocket, name: str = "", ip: str = "") -> str:
     if ip:
         display_name = f"{display_name} ({ip})"
 
-    user = {
-        "id": user_id,
-        "name": display_name,
-        "ip": ip,
-        "connected_at": now,
-        "last_activity": now,
-    }
+    user = CollaborationUser(
+        id=user_id,
+        name=display_name,
+        ip=ip,
+        connected_at=now,
+        last_activity=now,
+    )
 
     _connected_users[user_id] = user
     _websockets[user_id] = ws
@@ -124,14 +151,14 @@ async def connect_user(ws: WebSocket, name: str = "", ip: str = "") -> str:
 
     await _broadcast({
         "type": "user_joined",
-        "user": user,
+        "user": user.model_dump(mode="json"),
         "user_count": len(_connected_users),
     }, exclude=user_id)
 
     await _send(user_id, {
         "type": "init",
-        "mode": _mode,
-        "users": list(_connected_users.values()),
+        "mode": _mode.value,
+        "users": [u.model_dump(mode="json") for u in _connected_users.values()],
         "state": _shared_state,
     })
 
@@ -144,11 +171,11 @@ async def disconnect_user(user_id: str) -> None:
     _websockets.pop(user_id, None)
 
     if user:
-        logger.info("User disconnected: %s", user["name"])
+        logger.info("User disconnected: %s", user.name)
         await _broadcast({
             "type": "user_left",
             "user_id": user_id,
-            "user_name": user["name"],
+            "user_name": user.name,
             "user_count": len(_connected_users),
         })
 
@@ -180,33 +207,33 @@ async def handle_message(user_id: str, data: dict) -> None:
     if not user:
         return
 
-    user["last_activity"] = datetime.now(timezone.utc).isoformat()
+    user.last_activity = datetime.now(timezone.utc).isoformat()
 
     if msg_type == "navigate":
         # Forward full navigation state to all other users
         nav_state = data.get("state", {})
         _shared_state["nav"] = nav_state
         _shared_state["last_action"] = f"Navigated to {nav_state.get('tab', '?')}"
-        _shared_state["last_action_by"] = user["name"]
-        _shared_state["last_action_at"] = user["last_activity"]
+        _shared_state["last_action_by"] = user.name
+        _shared_state["last_action_at"] = user.last_activity
 
         await _broadcast({
             "type": "navigate",
             "state": nav_state,
-            "by": user["name"],
+            "by": user.name,
         }, exclude=user_id)
 
     elif msg_type == "action":
         action = data.get("action", "")
         _shared_state["last_action"] = action
-        _shared_state["last_action_by"] = user["name"]
-        _shared_state["last_action_at"] = user["last_activity"]
+        _shared_state["last_action_by"] = user.name
+        _shared_state["last_action_at"] = user.last_activity
 
         await _broadcast({
             "type": "action",
             "action": action,
             "detail": data.get("detail"),
-            "by": user["name"],
+            "by": user.name,
         }, exclude=user_id)
 
     elif msg_type == "pong":

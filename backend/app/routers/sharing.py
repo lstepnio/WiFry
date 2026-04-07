@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 
 from pydantic import BaseModel, Field
 
+from ..models.collaboration import CollaborationStatus
+from ..models.tunnel import TunnelStatus
 from ..services import tunnel, annotations, fileio, collaboration
 from ..services import report_generator
 from ..services import storage
@@ -22,7 +24,7 @@ router = APIRouter(tags=["sharing"])
 
 # --- Tunnel control ---
 
-@router.get("/api/v1/tunnel/status")
+@router.get("/api/v1/tunnel/status", response_model=TunnelStatus)
 async def tunnel_status():
     """Get Cloudflare tunnel status and URL."""
     return tunnel.get_status()
@@ -174,19 +176,19 @@ async def upload_history():
     return fileio.get_history()
 
 
-# --- Collaboration / Shadow Mode ---
+# --- Collaboration ---
 
-@router.get("/api/v1/collab/status")
+@router.get("/api/v1/collab/status", response_model=CollaborationStatus)
 async def collab_status():
     """Get collaboration mode status and connected users."""
     return collaboration.get_status()
 
 
 class CollabModeRequest(BaseModel):
-    mode: str = Field(..., description="spectate, co-pilot, or download")
+    mode: str = Field(..., description="co-pilot or download")
 
 
-@router.put("/api/v1/collab/mode")
+@router.put("/api/v1/collab/mode", response_model=CollaborationStatus)
 async def set_collab_mode(req: CollabModeRequest):
     """Set collaboration mode: co-pilot (shared control) or download (files only)."""
     try:

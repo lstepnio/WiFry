@@ -134,6 +134,19 @@ class CreateSessionRequest(BaseModel):
     network_interface: str = "wlan0"
 
 
+class ActiveSessionState(BaseModel):
+    """Durable pointer to the session used for auto-linking."""
+
+    active_session_id: Optional[str] = None
+
+
+class ActiveSessionResponse(BaseModel):
+    """API response for the current active session."""
+
+    active_session_id: Optional[str] = None
+    session_name: Optional[str] = None
+
+
 class SupportBundle(BaseModel):
     """A packaged support bundle for sharing."""
 

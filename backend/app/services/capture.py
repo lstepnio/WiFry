@@ -1,7 +1,8 @@
 """Packet capture management using tshark.
 
 Manages async tshark subprocesses for packet capture with BPF pre-filtering,
-safety limits, and structured metadata.
+safety limits, and structured metadata. Capture metadata persists on disk,
+but live tshark subprocess handles are in-memory only.
 """
 
 import asyncio
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 _captures: Dict[str, CaptureInfo] = {}
 _processes: Dict[str, asyncio.subprocess.Process] = {}
 _lock = asyncio.Lock()
+_STALE_CAPTURE_MESSAGE = (
+    "Capture interrupted before completion. Live capture state does not survive "
+    "backend restarts."
+)
 
 
 def _captures_dir() -> Path:
@@ -50,8 +55,30 @@ def _save_metadata(info: CaptureInfo) -> None:
 def _load_metadata(capture_id: str) -> Optional[CaptureInfo]:
     path = _metadata_path(capture_id)
     if path.exists():
-        return CaptureInfo.model_validate_json(path.read_text())
+        info = CaptureInfo.model_validate_json(path.read_text())
+        return _reconcile_capture(info)
     return None
+
+
+def _reconcile_capture(info: CaptureInfo) -> CaptureInfo:
+    if info.status != CaptureStatus.RUNNING or info.id in _processes:
+        return info
+
+    info.status = CaptureStatus.ERROR
+    info.stopped_at = info.stopped_at or datetime.now(timezone.utc).isoformat()
+    info.error = info.error or _STALE_CAPTURE_MESSAGE
+
+    pcap = Path(info.pcap_path)
+    if pcap.exists():
+        try:
+            info.file_size_bytes = pcap.stat().st_size
+        except OSError:
+            pass
+
+    _captures[info.id] = info
+    _save_metadata(info)
+    logger.warning("Capture %s marked as interrupted after state reload", info.id)
+    return info
 
 
 async def start_capture(req: StartCaptureRequest) -> CaptureInfo:
@@ -246,7 +273,10 @@ def get_capture(capture_id: str) -> Optional[CaptureInfo]:
     info = _captures.get(capture_id)
     if info:
         return info
-    return _load_metadata(capture_id)
+    info = _load_metadata(capture_id)
+    if info:
+        _captures[capture_id] = info
+    return info
 
 
 async def list_captures() -> List[CaptureInfo]:

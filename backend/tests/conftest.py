@@ -22,6 +22,7 @@ WIFRY_TMP_DIRS = [
     "/tmp/wifry-reports",
     "/tmp/wifry-annotations",
     "/tmp/wifry-scenarios",
+    "/tmp/wifry-runtime-state",
     "/tmp/wifry-teleport",
     "/tmp/wifry-coredns",
     "/tmp/wifry-network-profiles",
