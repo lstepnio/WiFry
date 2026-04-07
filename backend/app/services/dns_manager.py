@@ -187,7 +187,23 @@ def _generate_corefile(config: DnsConfig) -> None:
 
     blocks = []
 
-    # Main server block
+    # NXDOMAIN injection: separate server blocks per domain
+    # These MUST be before the main catch-all block so CoreDNS
+    # matches them first (more specific zones take priority)
+    for domain_pattern in config.impairments.nxdomain_domains:
+        clean = domain_pattern.lstrip("*").lstrip(".")
+        # Server block for this domain — no forward, just return NXDOMAIN
+        nxblock = f"{clean}:{config.listen_port} {{\n"
+        if config.log_queries:
+            nxblock += "    log\n"
+        nxblock += "    template IN ANY {\n"
+        nxblock += "        rcode NXDOMAIN\n"
+        nxblock += '        authority "{.}. 60 IN SOA ns.wifry. admin.wifry. 0 0 0 0 60"\n'
+        nxblock += "    }\n"
+        nxblock += "}\n"
+        blocks.append(nxblock)
+
+    # Main server block (catch-all)
     main_block = f".:{ config.listen_port} {{\n"
 
     # Logging
@@ -198,22 +214,6 @@ def _generate_corefile(config: DnsConfig) -> None:
     if config.overrides:
         main_block += f"    hosts {HOSTS_PATH} {{\n"
         main_block += "        fallthrough\n"
-        main_block += "    }\n"
-
-    # NXDOMAIN injection via template
-    # Template regex must match FQDN with trailing dot, and needs
-    # match/answer to properly intercept before forward plugin
-    for domain_pattern in config.impairments.nxdomain_domains:
-        # Convert glob pattern to CoreDNS template regex
-        # *.example.com → (.*\.)?example\.com\.$
-        # example.com → (.*\.)?example\.com\.$  (block domain + subdomains)
-        clean = domain_pattern.lstrip("*").lstrip(".")
-        escaped_domain = clean.replace(".", r"\.")
-        # Build regex: (.*\.)?example\.com\. — matches domain + subdomains with trailing dot
-        nxdomain_regex = r"(.*\.)?" + escaped_domain + r"\."
-        main_block += f"    template IN ANY {nxdomain_regex} {{\n"
-        main_block += "        rcode NXDOMAIN\n"
-        main_block += '        authority "{.}. 60 IN SOA ns.wifry. admin.wifry. 0 0 0 0 60"\n'
         main_block += "    }\n"
 
     # Random SERVFAIL via erratic plugin
@@ -413,7 +413,8 @@ async def _point_dnsmasq_to_coredns(port: int) -> None:
 
     conf_path = "/etc/dnsmasq.d/wifry-dns.conf"
     await sudo_write(conf_path, f"server=127.0.0.1#{port}\nno-resolv\n")
-    await run("systemctl", "reload", "dnsmasq", sudo=True, check=False)
+    # Restart (not reload) to flush dnsmasq cache so new DNS rules take effect
+    await run("systemctl", "restart", "dnsmasq", sudo=True, check=False)
     logger.info("dnsmasq forwarding to CoreDNS on port %d", port)
 
 
