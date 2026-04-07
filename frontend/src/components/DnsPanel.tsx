@@ -144,10 +144,18 @@ export default function DnsPanel() {
               )}
             </div>
           )}
-          <button onClick={() => applyConfig(!status?.enabled)} disabled={applying}
-            className={`rounded-lg px-5 py-2 text-sm font-medium text-white disabled:opacity-50 ${status?.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}>
-            {applying ? '...' : status?.enabled ? 'Disable' : 'Enable'}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => applyConfig(true)} disabled={applying}
+              className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {applying ? 'Applying...' : 'Apply'}
+            </button>
+            {status?.enabled && (
+              <button onClick={() => applyConfig(false)} disabled={applying}
+                className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                Clear All
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -246,12 +254,6 @@ export default function DnsPanel() {
           <textarea value={nxdomains} onChange={e => setNxdomains(e.target.value)} rows={2} placeholder="*.badcdn.example.com&#10;blocked.domain.com"
             className="w-full rounded border border-gray-600 bg-gray-800 px-3 py-1.5 font-mono text-xs text-white" />
         </div>
-        {status?.enabled && (
-          <button onClick={() => applyConfig(true)} disabled={applying}
-            className="mt-3 rounded bg-cyan-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-cyan-700 disabled:opacity-50">
-            {applying ? 'Applying...' : 'Apply Changes'}
-          </button>
-        )}
       </div>
 
       {/* === RECORD OVERRIDES SECTION === */}
