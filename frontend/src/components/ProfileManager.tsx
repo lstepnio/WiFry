@@ -107,6 +107,22 @@ export default function ProfileManager() {
           <p className="text-xs text-gray-500">One-click presets combining network and WiFi impairments. Built-in profiles simulate real-world conditions.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              if (!confirm('Clear ALL impairments (network, WiFi, DNS)? This will stop all active impairments.')) return;
+              try {
+                await Promise.all([
+                  api.clearAllImpairments(),
+                  fetch('/api/v1/wifi-impairments', { method: 'DELETE' }),
+                  fetch('/api/v1/dns/disable', { method: 'POST' }),
+                ]);
+                window.dispatchEvent(new CustomEvent('wifry:refresh'));
+              } catch { alert('Failed to clear some impairments'); }
+            }}
+            className="rounded border border-yellow-300 px-3 py-1 text-xs font-medium text-yellow-600 hover:bg-yellow-50 dark:border-yellow-700 dark:text-yellow-400"
+          >
+            Clear All Impairments
+          </button>
           {allProfiles.some(p => !p.builtin) && (
             <button
               onClick={handleDeleteAllCustom}

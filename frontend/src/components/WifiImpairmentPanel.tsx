@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   clearWifiImpairments,
   getWifiImpairmentCapabilities,
@@ -94,12 +94,36 @@ export default function WifiImpairmentPanel() {
     periodic_disconnect: { enabled: false, interval_secs: 300, disconnect_duration_secs: 5, target_mac: '' },
   });
   const [applying, setApplying] = useState(false);
+  const [feedback, setFeedback] = useState<'success' | 'error' | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  // Sync server state to local config when not dirty
+  useEffect(() => {
+    if (dirty || !state?.config) return;
+    const serverConfig = state.config as Record<string, Record<string, unknown>>;
+    setConfig(prev => {
+      const merged = { ...prev };
+      for (const key of Object.keys(merged)) {
+        if (serverConfig[key]) {
+          merged[key] = { ...merged[key], ...serverConfig[key] };
+        }
+      }
+      return merged;
+    });
+  }, [state, dirty]);
+
+  const showFeedback = (type: 'success' | 'error') => {
+    setFeedback(type);
+    setTimeout(() => setFeedback(null), 2000);
+  };
 
   const toggle = (id: string, enabled: boolean) => {
+    setDirty(true);
     setConfig(prev => ({ ...prev, [id]: { ...prev[id], enabled } }));
   };
 
   const updateField = (id: string, field: string, value: unknown) => {
+    setDirty(true);
     setConfig(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   };
 
@@ -107,9 +131,11 @@ export default function WifiImpairmentPanel() {
     setApplying(true);
     try {
       await updateWifiImpairments(config);
+      setDirty(false);
+      showFeedback('success');
       refresh();
     } catch {
-      alert('Failed to apply WiFi impairments');
+      showFeedback('error');
     } finally {
       setApplying(false);
     }
@@ -126,9 +152,11 @@ export default function WifiImpairmentPanel() {
         }
         return cleared;
       });
+      setDirty(false);
+      showFeedback('success');
       refresh();
     } catch {
-      alert('Failed to clear');
+      showFeedback('error');
     } finally {
       setApplying(false);
     }
@@ -316,15 +344,31 @@ export default function WifiImpairmentPanel() {
         </ToggleRow>
       </div>
 
-      <div className="mt-5 flex gap-3">
+      {feedback === 'success' && (
+        <div className="mt-4 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm font-medium text-green-400">
+          Impairments applied successfully
+        </div>
+      )}
+      {feedback === 'error' && (
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400">
+          Failed to apply impairments
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-3">
         <button onClick={handleApply} disabled={applying}
-          className="rounded-lg bg-orange-600 px-6 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50">
-          {applying ? 'Applying...' : 'Apply WiFi Impairments'}
+          className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+          {applying ? 'Applying...' : dirty ? 'Apply *' : 'Apply'}
         </button>
         <button onClick={handleClear} disabled={applying}
           className="rounded-lg border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
           Clear All
         </button>
+        {activeCount > 0 && (
+          <span className="rounded-full bg-yellow-500/20 px-3 py-1 text-xs font-medium text-yellow-400">
+            {activeCount} active
+          </span>
+        )}
       </div>
 
       {state?.disconnect_count ? (
