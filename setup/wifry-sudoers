@@ -35,14 +35,23 @@ wifry ALL=(ALL) NOPASSWD: /usr/sbin/hping3
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart hostapd
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart dnsmasq
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart dhcpcd
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl restart wifry-backend
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl stop hostapd
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl stop dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl stop wifry-backend
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl start hostapd
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl start dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl start wifry-backend
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl reload dnsmasq
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl is-active hostapd
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl is-active dnsmasq
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl is-active wifry-backend
+wifry ALL=(ALL) NOPASSWD: /bin/systemctl status *
 wifry ALL=(ALL) NOPASSWD: /bin/systemctl reboot
+wifry ALL=(ALL) NOPASSWD: /usr/bin/journalctl
+wifry ALL=(ALL) NOPASSWD: /usr/bin/tail
+wifry ALL=(ALL) NOPASSWD: /bin/chown
+wifry ALL=(ALL) NOPASSWD: /bin/chmod
 
 # IP forwarding
 wifry ALL=(ALL) NOPASSWD: /sbin/sysctl -w net.ipv4.ip_forward=1
