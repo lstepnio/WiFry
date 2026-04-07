@@ -238,6 +238,7 @@ async def _apply_wifi_ap(ap: WifiApConfig) -> None:
         channel=ap.channel,
         band=ap.band,
         country_code=ap.country_code,
+        channel_width=ap.channel_width,
     )
 
     await hostapd.setup_ap_networking()

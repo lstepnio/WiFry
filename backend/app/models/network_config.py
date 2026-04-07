@@ -41,6 +41,7 @@ class WifiApConfig(BaseModel):
     password: str = Field(DEFAULTS["ap_password"], min_length=8, max_length=63)
     channel: int = Field(DEFAULTS["ap_channel"], ge=0, le=165)
     band: str = Field(DEFAULTS["ap_band"], description="'2.4GHz' or '5GHz'")
+    channel_width: int = Field(20, description="Channel width in MHz: 20, 40, or 80")
     hidden: bool = Field(False, description="Hide SSID from broadcast")
     ip: str = Field(DEFAULTS["ap_ip"])
     netmask: str = Field(DEFAULTS["ap_netmask"])

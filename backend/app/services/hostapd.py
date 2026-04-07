@@ -20,6 +20,19 @@ DHCP_RANGE_START = "192.168.4.10"
 DHCP_RANGE_END = "192.168.4.200"
 
 
+def _vht_center_freq(channel: int) -> int:
+    """Calculate VHT center frequency segment 0 index for 80MHz width."""
+    # 80MHz groupings: 36-48→42, 52-64→58, 100-112→106, 116-128→122, 132-144→138, 149-161→155
+    groups = {
+        range(36, 49): 42, range(52, 65): 58, range(100, 113): 106,
+        range(116, 129): 122, range(132, 145): 138, range(149, 162): 155,
+    }
+    for r, center in groups.items():
+        if channel in r:
+            return center
+    return 0
+
+
 def generate_hostapd_conf(
     interface: str = "",
     ssid: str = "",
@@ -27,6 +40,7 @@ def generate_hostapd_conf(
     channel: int = 0,
     band: str = "",
     country_code: str = "US",
+    channel_width: int = 20,
 ) -> str:
     """Generate hostapd.conf content from the template."""
     iface = interface or settings.ap_interface or "wlan0"
@@ -35,23 +49,50 @@ def generate_hostapd_conf(
     channel = channel or settings.ap_channel
     band = band or settings.ap_band
 
-    # Determine hw_mode and 802.11 capabilities based on band
+    ht_capab = ""
+    vht_settings = ""
+
     if band == "5GHz":
         hw_mode = "a"
         ieee80211n = "ieee80211n=1"
         ieee80211ac = "ieee80211ac=1"
         ieee80211ax = "ieee80211ax=1"
-        # Force a valid 5GHz channel (2.4GHz channels 1-14 are invalid for hw_mode=a)
         if channel < 32:
             channel = 36
+
+        # HT capabilities (always enabled for 5GHz)
+        if channel_width >= 40:
+            ht_capab = "ht_capab=[HT40+][SHORT-GI-20][SHORT-GI-40]"
+        else:
+            ht_capab = "ht_capab=[SHORT-GI-20]"
+
+        # VHT capabilities for 80MHz
+        if channel_width >= 80:
+            center = _vht_center_freq(channel)
+            vht_settings = (
+                "vht_oper_chwidth=1\n"
+                f"vht_oper_centr_freq_seg0_idx={center}\n"
+                "vht_capab=[SHORT-GI-80][SU-BEAMFORMEE]"
+            )
+        elif channel_width >= 40:
+            vht_settings = (
+                "vht_oper_chwidth=0\n"
+                "vht_capab=[SHORT-GI-80][SU-BEAMFORMEE]"
+            )
+
     else:
         hw_mode = "g"
         ieee80211n = "ieee80211n=1"
         ieee80211ac = ""
         ieee80211ax = "ieee80211ax=1"
-        # Force a valid 2.4GHz channel (5GHz channels are invalid for hw_mode=g)
         if channel == 0 or channel > 14:
             channel = 6
+
+        # HT capabilities for 2.4GHz
+        if channel_width >= 40:
+            ht_capab = "ht_capab=[HT40+][SHORT-GI-20][SHORT-GI-40][DSSS_CCK-40]"
+        else:
+            ht_capab = "ht_capab=[SHORT-GI-20]"
 
     template_path = TEMPLATE_DIR / "hostapd.conf.template"
     template = Template(template_path.read_text())
@@ -65,6 +106,8 @@ def generate_hostapd_conf(
         IEEE80211N_LINE=ieee80211n,
         IEEE80211AC_LINE=ieee80211ac,
         IEEE80211AX_LINE=ieee80211ax,
+        HT_CAPAB_LINE=ht_capab,
+        VHT_SETTINGS=vht_settings,
         COUNTRY_CODE=country_code,
     )
 
