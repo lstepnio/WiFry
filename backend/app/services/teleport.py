@@ -130,11 +130,17 @@ async def connect(profile_id: str) -> TeleportStatus:
 
     # Log to active session
     from . import session_manager
+    from ..models.session import ArtifactType
     sid = session_manager.get_active_session_id()
     if sid:
-        session_manager.log_impairment(
-            sid,
-            label=f"Teleport: {profile.name} ({profile.market})",
+        label = f"Teleport: {profile.name} ({profile.market})"
+        session_manager.log_impairment(sid, label=label)
+        await session_manager.auto_add_artifact(
+            ArtifactType.IMPAIRMENT_LOG,
+            name=label,
+            data={"vpn_type": profile.vpn_type, "market": profile.market,
+                  "profile_name": profile.name},
+            tags=["teleport", "vpn", "impairment"],
         )
 
     logger.info("Teleport connected: %s (%s)", profile.name, profile.market)

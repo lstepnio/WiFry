@@ -166,12 +166,13 @@ def get_active_session_id() -> Optional[str]:
     return _active_session_id
 
 
-async def set_active_session(session_id: str) -> None:
-    """Set which session is active for auto-linking."""
-    async with _lock:
-        _load_all()
-        if session_id not in _sessions:
-            raise ValueError(f"Session {session_id} not found")
+async def set_active_session(session_id: Optional[str]) -> None:
+    """Set which session is active for auto-linking. Pass None to deactivate."""
+    if session_id is not None:
+        async with _lock:
+            _load_all()
+            if session_id not in _sessions:
+                raise ValueError(f"Session {session_id} not found")
     _persist_active_session_state(session_id)
 
 

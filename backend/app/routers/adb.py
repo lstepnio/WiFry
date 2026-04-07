@@ -81,9 +81,20 @@ async def start_logcat(
 
 @router.post("/logcat/{session_id}/stop", response_model=LogcatSession)
 async def stop_logcat(session_id: str):
-    """Stop a logcat session."""
+    """Stop a logcat session. Auto-links to active test session."""
     try:
-        return await adb_manager.stop_logcat(session_id)
+        result = await adb_manager.stop_logcat(session_id)
+
+        from ..services import session_manager
+        from ..models.session import ArtifactType
+        await session_manager.auto_add_artifact(
+            ArtifactType.LOGCAT,
+            name=f"Logcat: {result.serial}",
+            data={"logcat_session_id": session_id, "line_count": result.line_count},
+            tags=["logcat", "adb"],
+        )
+
+        return result
     except ValueError as e:
         raise HTTPException(404, str(e))
 

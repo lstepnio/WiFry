@@ -97,13 +97,19 @@ async def apply_config(config: DnsConfig) -> DnsStatus:
 
     # Log to active session
     from . import session_manager
+    from ..models.session import ArtifactType
     sid = session_manager.get_active_session_id()
     if sid:
         active_impairments = _get_active_impairments(config)
-        session_manager.log_impairment(
-            sid,
-            label=f"DNS: {'enabled' if config.enabled else 'disabled'}" +
-                  (f" ({', '.join(active_impairments)})" if active_impairments else ""),
+        label = f"DNS: {'enabled' if config.enabled else 'disabled'}" + \
+                (f" ({', '.join(active_impairments)})" if active_impairments else "")
+        session_manager.log_impairment(sid, label=label)
+        await session_manager.auto_add_artifact(
+            ArtifactType.IMPAIRMENT_LOG,
+            name=label,
+            data={"dns_enabled": config.enabled, "upstream": config.upstream.provider,
+                  "impairments": active_impairments},
+            tags=["dns", "impairment"],
         )
 
     logger.info("DNS config applied (enabled=%s)", config.enabled)

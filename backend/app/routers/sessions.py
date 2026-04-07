@@ -69,6 +69,13 @@ async def set_active_session(session_id: str):
     return {"status": "ok", "active_session_id": session_id}
 
 
+@router.post("/deactivate")
+async def deactivate_session():
+    """Stop recording — deactivate the current session without completing it."""
+    await session_manager.set_active_session(None)
+    return {"status": "ok", "active_session_id": None}
+
+
 @router.get("/{session_id}", response_model=TestSession)
 async def get_session(session_id: str):
     """Get full session detail."""
