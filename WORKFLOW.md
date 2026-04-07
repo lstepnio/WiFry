@@ -141,21 +141,36 @@ cd frontend && npx tsc --noEmit && npm run build
 git checkout main && git pull
 git status  # should be clean
 
-# 2. Run tests locally
-cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/
-cd frontend && npx tsc --noEmit && npm run build
+# 2. Run the same fast-feedback gates that PRs use
+cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q
+cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest \
+  tests/test_runtime_state_boundaries.py \
+  tests/test_storage_scheduler.py \
+  tests/test_sessions.py \
+  tests/test_captures.py \
+  tests/test_sharing.py \
+  tests/test_system.py \
+  tests/test_system_extended.py \
+  -q
+cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build
 
-# 3. Check what's changed since last release
+# 3. Run hardware smoke verification on the real box (manual release gate)
+cd backend && source .venv/bin/activate && python -m pytest tests/hw -m "hw_readiness or hw_smoke" -v --tb=short
+
+# 4. Optional: run hardware integration if a client is connected
+cd backend && source .venv/bin/activate && python -m pytest tests/hw -m "hw_integration" -v --tb=short --hw-client-ip <client-ip>
+
+# 5. Check what's changed since last release
 git log --oneline v0.1.8..HEAD  # adjust previous tag
 
-# 4. Tag the release
+# 6. Tag the release
 git tag -a v0.1.9 -m "v0.1.9: brief description"
 git push origin v0.1.9
 
-# 5. Watch the CI build
+# 7. Watch the CI build
 gh run watch $(gh run list --workflow=build-image.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 
-# 6. Update release notes
+# 8. Update release notes
 gh release edit v0.1.9 --notes "## WiFry v0.1.9
 ### Changes
 - ...
@@ -242,8 +257,10 @@ Fallback if mDNS doesn't resolve: use `169.254.42.1` (direct Ethernet).
 | Action | Command |
 |--------|---------|
 | Check open PRs | `gh pr list` |
-| Run backend tests | `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/` |
-| Build frontend | `cd frontend && npm run build` |
+| Run backend fast feedback | `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q` |
+| Run backend release-risk tests | `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/test_runtime_state_boundaries.py tests/test_storage_scheduler.py tests/test_sessions.py tests/test_captures.py tests/test_sharing.py tests/test_system.py tests/test_system_extended.py -q` |
+| Run hardware smoke verification | `cd backend && source .venv/bin/activate && python -m pytest tests/hw -m "hw_readiness or hw_smoke" -v --tb=short` |
+| Build and test frontend | `cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build` |
 | Deploy file to RPi | `scp <file> wifry:/tmp/ && ssh wifry "sudo cp /tmp/<file> /opt/wifry/..."` |
 | Restart RPi backend | `ssh wifry "sudo systemctl restart wifry-backend"` |
 | Check RPi logs | `ssh wifry "sudo journalctl -u wifry-backend -f --no-pager"` |

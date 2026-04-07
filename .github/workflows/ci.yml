@@ -5,9 +5,30 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_hw_smoke:
+        description: "Run hardware readiness + smoke checks on a self-hosted WiFry runner"
+        required: false
+        default: false
+        type: boolean
+      run_hw_integration:
+        description: "Run hardware integration checks with a connected WiFi client"
+        required: false
+        default: false
+        type: boolean
+      hw_client_ip:
+        description: "WiFi client IP for hardware integration tests"
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
 
 jobs:
   test-backend:
+    name: Backend Fast Feedback
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,7 +36,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -30,19 +51,46 @@ jobs:
         run: |
           cd backend
           source .venv/bin/activate
-          python -m pytest tests/ -v --tb=short
+          python -m pytest tests/ --ignore=tests/hw -q --tb=short
 
-      - name: Run coverage
+  test-backend-release-risk:
+    name: Backend Release-Risk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        env:
+          WIFRY_MOCK_MODE: "true"
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Run release-risk tests
         env:
           WIFRY_MOCK_MODE: "true"
         run: |
           cd backend
           source .venv/bin/activate
-          pip install coverage
-          python -m coverage run -m pytest tests/ -q
-          python -m coverage report --fail-under=70
+          python -m pytest \
+            tests/test_runtime_state_boundaries.py \
+            tests/test_storage_scheduler.py \
+            tests/test_sessions.py \
+            tests/test_captures.py \
+            tests/test_sharing.py \
+            tests/test_system.py \
+            tests/test_system_extended.py \
+            -q
 
   test-frontend:
+    name: Frontend Critical Flows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,12 +98,24 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
+
+      - name: Lint
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Run frontend tests
+        run: |
+          cd frontend
+          npm test
 
       - name: Type check
         run: |
@@ -66,3 +126,55 @@ jobs:
         run: |
           cd frontend
           npm run build
+
+  test-hardware-smoke:
+    name: Hardware Smoke
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_hw_smoke == 'true' }}
+    runs-on: [self-hosted, linux, arm64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Run hardware readiness and smoke tests
+        run: |
+          cd backend
+          source .venv/bin/activate
+          python -m pytest tests/hw -m "hw_readiness or hw_smoke" -v --tb=short
+
+  test-hardware-integration:
+    name: Hardware Integration
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_hw_integration == 'true' && github.event.inputs.hw_client_ip != '' }}
+    runs-on: [self-hosted, linux, arm64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Run hardware integration tests
+        run: |
+          cd backend
+          source .venv/bin/activate
+          python -m pytest tests/hw -m "hw_integration" -v --tb=short --hw-client-ip "${{ github.event.inputs.hw_client_ip }}"
