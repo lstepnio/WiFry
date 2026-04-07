@@ -25,6 +25,7 @@ from typing import List, Optional
 
 from ..config import settings
 from ..utils.shell import run
+from . import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -180,18 +181,34 @@ async def apply_update(target_version: str = "") -> dict:
     Returns immediately with status; restart happens 3s later.
     """
     if settings.mock_mode:
-        return {
+        result = {
             "status": "ok",
             "message": f"Update to {target_version or 'latest'} simulated (mock mode)",
             "previous_version": get_current_version(),
             "new_version": target_version or "v0.1.3",
             "steps": ["git checkout: ok", "pip install: ok", "frontend build: ok", "restart: scheduled"],
         }
+        audit_log.record_event(
+            "system.update.apply",
+            resource_type="update",
+            details={
+                "previous_version": result["previous_version"],
+                "new_version": result["new_version"],
+                "mock_mode": True,
+            },
+        )
+        return result
 
     # Determine target
     if not target_version:
         target_version = await get_latest_version()
         if not target_version:
+            audit_log.record_event(
+                "system.update.apply",
+                outcome="error",
+                resource_type="update",
+                details={"message": "No versions available"},
+            )
             return {"status": "error", "message": "No versions available. Check internet connection."}
 
     # Ensure tag format
@@ -203,6 +220,12 @@ async def apply_update(target_version: str = "") -> dict:
 
     # Ensure git repo
     if not await ensure_git_repo():
+        audit_log.record_event(
+            "system.update.apply",
+            outcome="error",
+            resource_type="update",
+            details={"target_version": target_version, "message": "Failed to initialize git repo"},
+        )
         return {"status": "error", "message": "Failed to initialize git repo"}
     steps.append("git repo: ok")
 
@@ -229,6 +252,12 @@ async def apply_update(target_version: str = "") -> dict:
     result = await run("git", "-C", INSTALL_DIR, "fetch", "--tags", "--force",
                        check=False, timeout=60)
     if not result.success:
+        audit_log.record_event(
+            "system.update.apply",
+            outcome="error",
+            resource_type="update",
+            details={"target_version": target_version, "message": f"git fetch failed: {result.stderr}"},
+        )
         return {"status": "error", "message": f"git fetch failed: {result.stderr}",
                 "steps": steps}
     steps.append("git fetch: ok")
@@ -237,6 +266,12 @@ async def apply_update(target_version: str = "") -> dict:
     result = await run("git", "-C", INSTALL_DIR, "checkout", target_version, "--force",
                        check=False, timeout=30)
     if not result.success:
+        audit_log.record_event(
+            "system.update.apply",
+            outcome="error",
+            resource_type="update",
+            details={"target_version": target_version, "message": f"git checkout failed: {result.stderr}"},
+        )
         return {"status": "error", "message": f"git checkout {target_version} failed: {result.stderr}",
                 "steps": steps}
     steps.append(f"git checkout {target_version}: ok")
@@ -266,6 +301,12 @@ async def apply_update(target_version: str = "") -> dict:
         logger.error("pip install failed: %s", result.stderr)
         steps.append(f"pip install: FAILED ({result.stderr[:100]})")
         await _rollback(previous_version, previous_commit)
+        audit_log.record_event(
+            "system.update.apply",
+            outcome="error",
+            resource_type="update",
+            details={"target_version": target_version, "message": "pip install failed"},
+        )
         return {"status": "error", "message": "pip install failed, rolled back",
                 "steps": steps}
 
@@ -282,6 +323,12 @@ async def apply_update(target_version: str = "") -> dict:
         logger.error("npm build failed: %s", result.stderr)
         steps.append(f"frontend build: FAILED ({result.stderr[:100]})")
         await _rollback(previous_version, previous_commit)
+        audit_log.record_event(
+            "system.update.apply",
+            outcome="error",
+            resource_type="update",
+            details={"target_version": target_version, "message": "frontend build failed"},
+        )
         return {"status": "error", "message": "Frontend build failed, rolled back",
                 "steps": steps}
 
@@ -289,7 +336,15 @@ async def apply_update(target_version: str = "") -> dict:
     asyncio.create_task(_deferred_restart())
     steps.append("restart: scheduled (3s)")
 
-    logger.info("Update to %s complete, restarting...", target_version)
+    logger.info(
+        "update.applied",
+        extra={"event": "system_update", "target_version": target_version, "previous_version": previous_version},
+    )
+    audit_log.record_event(
+        "system.update.apply",
+        resource_type="update",
+        details={"previous_version": previous_version, "new_version": version_str},
+    )
 
     return {
         "status": "ok",
@@ -316,7 +371,12 @@ async def _rollback(previous_version: str, previous_commit: str) -> None:
         await run("bash", "-c", f"echo '{previous_version}' > {VERSION_FILE}",
                   sudo=True, check=False)
 
-    logger.info("Rollback complete")
+    logger.info("update.rollback_complete", extra={"event": "system_update_rollback", "previous_version": previous_version})
+    audit_log.record_event(
+        "system.update.rollback",
+        resource_type="update",
+        details={"previous_version": previous_version, "previous_commit": previous_commit},
+    )
 
 
 async def _deferred_restart() -> None:

@@ -10,11 +10,12 @@ import logging
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from ..config import settings
 from ..models.session import SupportBundle, TestSession
-from . import session_manager
+from ..observability import get_request_id
+from . import audit_log, session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +35,17 @@ async def generate_bundle(session_id: str) -> SupportBundle:
 
     artifacts = session_manager.get_session_artifacts(session_id)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    generated_at = datetime.now(timezone.utc).isoformat()
     safe_name = session.name.replace(" ", "_").replace("/", "_")[:40]
     filename = f"wifry_bundle_{safe_name}_{ts}.zip"
     bundle_path = _ensure_dir() / filename
+    diagnostics = _build_bundle_diagnostics(session, artifacts, generated_at)
 
     with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1. Session metadata
         meta = {
             "session": session.model_dump(),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": generated_at,
             "generator": "WiFry - IP Video Edition",
             "artifact_count": len(artifacts),
         }
@@ -61,14 +64,15 @@ async def generate_bundle(session_id: str) -> SupportBundle:
             from . import tc_manager, wifi_impairment, dns_manager
             from ..services.network import get_managed_interfaces
             current_state = {
-                "snapshot_at": datetime.now(timezone.utc).isoformat(),
+                "snapshot_at": generated_at,
                 "network": {},
                 "wifi": wifi_impairment.get_state().model_dump(),
                 "dns": dns_manager.get_status().model_dump(),
             }
             zf.writestr("current_impairment_state.json", json.dumps(current_state, indent=2, default=str))
+            diagnostics["current_impairment_state_included"] = True
         except Exception:
-            pass  # Non-critical — don't fail bundle generation
+            diagnostics["current_impairment_state_included"] = False
 
         # 4. Notes
         if session.notes:
@@ -91,16 +95,29 @@ async def generate_bundle(session_id: str) -> SupportBundle:
                 fp = Path(artifact.file_path)
                 if fp.exists() and fp.is_file():
                     zf.write(fp, f"{art_dir}/{fp.name}")
+                    diagnostics["artifact_files_included"] += 1
+                else:
+                    diagnostics["artifact_files_missing"].append(
+                        {
+                            "artifact_id": artifact.id,
+                            "name": artifact.name,
+                            "type": artifact.type.value,
+                            "file_path": artifact.file_path,
+                        }
+                    )
 
             # Include inline data
             if artifact.data:
                 zf.writestr(f"{art_dir}/data.json", json.dumps(artifact.data, indent=2, default=str))
+                diagnostics["inline_data_entries"] += 1
 
         # 7. Human-readable summary
         summary = _generate_summary(session, artifacts)
         zf.writestr("SUMMARY.md", summary)
+        zf.writestr("diagnostics/bundle_diagnostics.json", json.dumps(diagnostics, indent=2, default=str))
 
     bundle_size = bundle_path.stat().st_size
+    diagnostics["bundle_size_bytes"] = bundle_size
 
     bundle = SupportBundle(
         session_id=session_id,
@@ -108,11 +125,12 @@ async def generate_bundle(session_id: str) -> SupportBundle:
         bundle_path=str(bundle_path),
         size_bytes=bundle_size,
         artifact_count=len(artifacts),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=generated_at,
         device=session.device,
         tags=session.tags,
         notes=session.notes,
         impairment_log=session.impairment_log,
+        diagnostics=diagnostics,
     )
 
     # Auto-add the bundle as an artifact to the session
@@ -124,7 +142,28 @@ async def generate_bundle(session_id: str) -> SupportBundle:
         tags=["bundle", "support"],
     )
 
-    logger.info("Bundle generated: %s (%d artifacts, %d bytes)", filename, len(artifacts), bundle_size)
+    logger.info(
+        "bundle.generated",
+        extra={
+            "event": "support_bundle",
+            "session_id": session_id,
+            "bundle_name": filename,
+            "artifact_count": len(artifacts),
+            "size_bytes": bundle_size,
+            "missing_artifact_files": len(diagnostics["artifact_files_missing"]),
+        },
+    )
+    audit_log.record_event(
+        "session.bundle.generate",
+        resource_type="session",
+        resource_id=session_id,
+        details={
+            "bundle_name": filename,
+            "artifact_count": len(artifacts),
+            "size_bytes": bundle_size,
+            "missing_artifact_files": len(diagnostics["artifact_files_missing"]),
+        },
+    )
     return bundle
 
 
@@ -212,3 +251,24 @@ def _generate_summary(session: TestSession, artifacts: list) -> str:
     lines.append(f"*Generated by WiFry - IP Video Edition*")
 
     return "\n".join(lines)
+
+
+def _build_bundle_diagnostics(session: TestSession, artifacts: list, generated_at: str) -> Dict[str, object]:
+    artifact_counts: Dict[str, int] = {}
+    for artifact in artifacts:
+        artifact_counts[artifact.type.value] = artifact_counts.get(artifact.type.value, 0) + 1
+
+    return {
+        "generated_at": generated_at,
+        "request_id": get_request_id(),
+        "purpose": "Session-scoped packaging diagnostics for STB/test evidence handoff",
+        "session_id": session.id,
+        "session_name": session.name,
+        "session_status": session.status.value,
+        "artifact_count": len(artifacts),
+        "artifact_files_included": 0,
+        "artifact_files_missing": [],
+        "artifacts_by_type": artifact_counts,
+        "inline_data_entries": 0,
+        "includes_appliance_diagnostics": False,
+    }

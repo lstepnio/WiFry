@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from ..models.collaboration import CollaborationStatus
 from ..models.tunnel import TunnelStatus
-from ..services import tunnel, annotations, fileio, collaboration
+from ..services import tunnel, annotations, audit_log, fileio, collaboration
 from ..services import report_generator
 from ..services import storage
 
@@ -130,6 +130,12 @@ async def download_shared_file(category: str, file_path: str):
         ".txt": "text/plain",
     }
     media_type = media_types.get(suffix, "application/octet-stream")
+    audit_log.record_event(
+        "sharing.file.download",
+        resource_type=category,
+        resource_id=full_path.name,
+        details={"category": category, "path": file_path, "size_bytes": full_path.stat().st_size},
+    )
 
     return FileResponse(full_path, filename=full_path.name, media_type=media_type)
 

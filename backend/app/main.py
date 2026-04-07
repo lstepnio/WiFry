@@ -1,22 +1,23 @@
 """WiFry — FastAPI application entry point."""
 
 import logging
+import time
+from uuid import uuid4
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .config import settings
-from .routers import adb, annotations, captures, dns, hdmi, hw_tests, impairments, network, network_config, profiles, scanner, scenarios, sessions, sharing, streams, system, teleport, wifi_impairments
+from .observability import bind_request_context, configure_logging, reset_request_context
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+configure_logging(settings.debug)
 logger = logging.getLogger("wifry")
+
+from .routers import adb, annotations, captures, dns, hdmi, hw_tests, impairments, network, network_config, profiles, scanner, scenarios, sessions, sharing, streams, system, teleport, wifi_impairments
 
 
 @asynccontextmanager
@@ -93,6 +94,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or request.headers.get("x-request-id") or uuid4().hex[:12]
+    client_ip = request.client.host if request.client else ""
+    token = bind_request_context(
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        client_ip=client_ip,
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    request.state.request_id = request_id
+    started = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "request.failed",
+            extra={
+                "event": "http_request",
+                "method": request.method,
+                "path": request.url.path,
+                "client_ip": client_ip,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                "outcome": "error",
+            },
+        )
+        reset_request_context(token)
+        raise
+
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request.completed",
+        extra={
+            "event": "http_request",
+            "method": request.method,
+            "path": request.url.path,
+            "client_ip": client_ip,
+            "status_code": response.status_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            "outcome": "success" if response.status_code < 500 else "error",
+        },
+    )
+    reset_request_context(token)
+    return response
 
 app.include_router(impairments.router)
 app.include_router(wifi_impairments.router)

@@ -266,6 +266,7 @@ sudo /opt/wifry/setup/wifry-recovery.sh
 
 /var/lib/wifry/                # Runtime data (survives updates)
   ├── captures/                # Packet capture .pcap files
+  ├── logs/                    # Structured logs, audit JSONL, operator diagnostics
   ├── sessions/                # Session metadata + artifacts
   ├── scenarios/               # Saved scenario definitions
   ├── reports/                 # Generated HTML reports
@@ -328,6 +329,35 @@ sudo -u wifry python3 -m venv /opt/wifry/backend/.venv
 sudo -u wifry /opt/wifry/backend/.venv/bin/pip install -r /opt/wifry/backend/requirements.txt
 sudo systemctl restart wifry-backend
 ```
+
+### Correlate an operator action to backend logs
+```bash
+# Any API response includes X-Request-ID
+curl -i http://wifry.local:8080/api/v1/system/info
+
+# Follow structured backend logs and search for the same request_id
+sudo journalctl -u wifry-backend -n 100 --no-pager
+
+# Read recent audit events directly from the API
+curl http://wifry.local:8080/api/v1/system/audit | jq .
+```
+
+### Support bundle diagnostics
+Support bundles now include:
+
+- `diagnostics/bundle_diagnostics.json`
+
+Use those files when a bundle reaches engineering and you need to answer:
+
+- which request triggered the bundle
+- which artifact files were missing at bundle time
+
+Session bundles remain focused on the STB/test run. They do not include appliance-wide audit history or WiFry operator logs.
+
+For WiFry appliance diagnostics, use:
+
+- `curl http://wifry.local:8080/api/v1/system/audit | jq .`
+- `sudo journalctl -u wifry-backend -n 100 --no-pager`
 
 ### Factory reset (keep code, wipe data)
 ```bash
