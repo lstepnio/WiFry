@@ -63,6 +63,12 @@ async def ensure_git_repo() -> bool:
     if settings.mock_mode:
         return True
 
+    # Check git is available
+    git_check = await run("which", "git", check=False, timeout=5)
+    if not git_check.success:
+        logger.warning("git not installed — cannot bootstrap repo")
+        return False
+
     logger.info("Bootstrapping git repo at %s", INSTALL_DIR)
 
     # Init repo
@@ -91,6 +97,12 @@ async def get_available_versions() -> List[str]:
     """Get list of available version tags from remote, sorted newest first."""
     if settings.mock_mode:
         return ["v0.1.3", "v0.1.2", "v0.1.1", "v0.1.0"]
+
+    # Check git is installed
+    git_check = await run("which", "git", check=False, timeout=5)
+    if not git_check.success:
+        logger.warning("git not installed — cannot check for updates")
+        return []
 
     await ensure_git_repo()
 
