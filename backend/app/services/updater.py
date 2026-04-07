@@ -241,6 +241,10 @@ async def apply_update(target_version: str = "") -> dict:
                 "steps": steps}
     steps.append(f"git checkout {target_version}: ok")
 
+    # Fix ownership after checkout (git may change file owners)
+    await run("chown", "-R", "wifry:wifry", INSTALL_DIR, sudo=True, check=False)
+    steps.append("chown: ok")
+
     # Write VERSION file
     version_str = target_version.lstrip("v")
     try:
@@ -265,7 +269,9 @@ async def apply_update(target_version: str = "") -> dict:
         return {"status": "error", "message": "pip install failed, rolled back",
                 "steps": steps}
 
-    # npm build
+    # npm install + build
+    await run("bash", "-c", f"cd {INSTALL_DIR}/frontend && npm install --no-audit --no-fund -q",
+              check=False, timeout=180)
     result = await run(
         "bash", "-c", f"cd {INSTALL_DIR}/frontend && npm run build",
         check=False, timeout=180,
