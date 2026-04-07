@@ -60,6 +60,20 @@ WiFry now treats critical runtime state in two explicit buckets so restart behav
 
 This keeps durable operator intent and artifact inventory on disk without pretending that live process handles, WebSockets, or public tunnel URLs can be safely recovered after a backend restart.
 
+## Observability Foundation
+
+WiFry now ships with a minimal observability layer aimed at release support rather than heavy telemetry infrastructure:
+
+| Signal | Behavior |
+|-------|----------|
+| Request correlation | Every HTTP response includes `X-Request-ID`; the same ID is attached to backend log lines created during that request |
+| Structured logs | Backend logs are emitted as JSON lines with stable fields such as `ts`, `level`, `logger`, `message`, `request_id`, and event-specific metadata |
+| Audit events | Destructive or external actions append JSONL audit events under `/var/lib/wifry/logs/audit.log.jsonl` |
+| Operator diagnostics | `/api/v1/system/audit` exposes recent audit events without having to parse journal output |
+| Support bundle diagnostics | Session bundles include a narrow `diagnostics/bundle_diagnostics.json` manifest about bundle assembly only |
+
+This keeps the Pi-friendly deployment simple: logs stay local, audit events are append-only JSONL, and operators can correlate UI actions and API calls with one request ID without turning the Session bundle into a WiFry appliance-support export.
+
 ## Session Workflow
 
 The recommended workflow for IP video testing:
@@ -102,6 +116,7 @@ The recommended workflow for IP video testing:
 8. GENERATE BUNDLE
    └─ One-click: zip all session artifacts + metadata
    └─ Includes: pcaps, analyses, screenshots, logcat, impairment timeline
+   └─ Includes a narrow bundle-assembly manifest (for missing files / packaging traceability)
    └─ SUMMARY.md with human-readable report
 
 9. SHARE
@@ -155,7 +170,7 @@ All endpoints under `/api/v1/`:
 | `/fileio` | Bundle link generation | expiring uploads + history |
 | `/collab` | Collaboration mode | experimental status, mode, WebSocket |
 | `/network-config` | WiFi AP + Ethernet config | current, apply, profiles |
-| `/system` | RPi info + settings | info, storage, update, logs |
+| `/system` | RPi info + settings | info, storage, update, logs, audit |
 | `/annotations` | Notes + tags | CRUD |
 | `/gremlin` | Chaos mode (easter egg) | activate, deactivate (hidden) |
 

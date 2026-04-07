@@ -16,7 +16,7 @@ from ..models.session import (
     SupportBundle,
     TestSession,
 )
-from ..services import session_manager, bundle_generator, fileio
+from ..services import audit_log, session_manager, bundle_generator, fileio
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -183,6 +183,16 @@ async def generate_and_share_bundle(session_id: str, expires: str = "15m"):
     try:
         bundle = await bundle_generator.generate_bundle(session_id)
         upload = await fileio.upload_file(bundle.bundle_path, expires)
+        audit_log.record_event(
+            "session.bundle.share",
+            resource_type="session",
+            resource_id=session_id,
+            details={
+                "bundle_name": Path(bundle.bundle_path).name,
+                "expires": expires,
+                "upload_success": upload.get("success", False),
+            },
+        )
         return {
             "bundle": bundle.model_dump(),
             "upload": upload,

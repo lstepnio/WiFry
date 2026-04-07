@@ -162,3 +162,4 @@ class SupportBundle(BaseModel):
     tags: List[str] = Field(default_factory=list)
     notes: str = ""
     impairment_log: List[ImpairmentSnapshot] = Field(default_factory=list)
+    diagnostics: Dict[str, Any] = Field(default_factory=dict)

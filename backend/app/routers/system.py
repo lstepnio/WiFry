@@ -1,12 +1,15 @@
 """System router — RPi info, settings, reboot."""
 
+import json
 import logging
 import platform
 from pathlib import Path
+from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..config import settings
+from ..models.observability import AuditEvent
 from ..utils.shell import run
 
 logger = logging.getLogger(__name__)
@@ -91,10 +94,13 @@ async def get_system_info():
 @router.post("/reboot")
 async def reboot():
     """Reboot the Raspberry Pi."""
+    from ..services import audit_log
     if settings.mock_mode:
+        audit_log.record_event("system.reboot", resource_type="system", details={"mock_mode": True})
         return {"status": "mock", "message": "Reboot simulated (mock mode)"}
 
     await run("systemctl", "reboot", sudo=True, check=False)
+    audit_log.record_event("system.reboot", resource_type="system")
     return {"status": "ok", "message": "Rebooting..."}
 
 
@@ -222,9 +228,16 @@ async def get_feature_flags():
 @router.put("/features/{flag_name}")
 async def set_feature_flag(flag_name: str, enabled: bool):
     """Enable or disable a feature flag."""
-    from ..services import feature_flags
+    from ..services import audit_log, feature_flags
     try:
-        return feature_flags.set_flag(flag_name, enabled)
+        result = feature_flags.set_flag(flag_name, enabled)
+        audit_log.record_event(
+            "system.feature_flag.set",
+            resource_type="feature_flag",
+            resource_id=flag_name,
+            details={"enabled": enabled},
+        )
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -232,8 +245,10 @@ async def set_feature_flag(flag_name: str, enabled: bool):
 @router.post("/features/reset")
 async def reset_feature_flags():
     """Reset all feature flags to defaults."""
-    from ..services import feature_flags
-    return feature_flags.reset_defaults()
+    from ..services import audit_log, feature_flags
+    result = feature_flags.reset_defaults()
+    audit_log.record_event("system.feature_flag.reset", resource_type="feature_flag")
+    return result
 
 
 # --- Data Management ---
@@ -242,6 +257,7 @@ async def reset_feature_flags():
 async def delete_all_data():
     """Full factory reset — delete ALL data, settings, and reset network config to defaults."""
     import shutil
+    from ..services import audit_log
 
     base = Path("/var/lib/wifry") if not settings.mock_mode else Path("/tmp/wifry")
     deleted = {}
@@ -287,7 +303,12 @@ async def delete_all_data():
     except Exception:
         pass
 
-    logger.info("Factory reset complete: %s", deleted)
+    logger.info("system.factory_reset_complete", extra={"event": "factory_reset", "deleted": deleted})
+    audit_log.record_event(
+        "system.data.delete_all",
+        resource_type="data",
+        details={"deleted": deleted},
+    )
     return {"status": "ok", "deleted": deleted}
 
 
@@ -295,7 +316,7 @@ async def delete_all_data():
 async def delete_category_data(category: str):
     """Delete all data in a specific category (captures, sessions, logs, etc.)."""
     import shutil
-    from ..services import storage
+    from ..services import audit_log, storage
     paths = storage.get_data_paths()
     dir_path = paths.get(category)
     if not dir_path:
@@ -306,6 +327,12 @@ async def delete_category_data(category: str):
         count = sum(1 for f in p.rglob("*") if f.is_file())
         shutil.rmtree(p, ignore_errors=True)
         p.mkdir(parents=True, exist_ok=True)
+    audit_log.record_event(
+        "system.data.delete_category",
+        resource_type="data",
+        resource_id=category,
+        details={"files_deleted": count},
+    )
     return {"status": "ok", "category": category, "files_deleted": count}
 
 
@@ -318,11 +345,11 @@ async def get_app_logs(lines: int = 200, level: str = "all"):
     """Get WiFry application logs (journalctl)."""
     if settings.mock_mode:
         return {"lines": [
-            "2026-04-03 00:10:00 INFO [wifry] WiFry starting up (mock_mode=True)",
-            "2026-04-03 00:10:00 WARNING [wifry] Running in MOCK MODE",
-            "2026-04-03 00:10:01 INFO [app.services.tc_manager] Applied impairment on wlan0",
-            "2026-04-03 00:10:05 INFO [app.services.capture] Started capture abc123",
-            "2026-04-03 00:10:10 WARNING [app.services.gremlin] PacketGremlin has entered the network.",
+            json.dumps({"ts": "2026-04-03T00:10:00Z", "level": "INFO", "logger": "wifry", "message": "WiFry starting up", "event": "startup"}),
+            json.dumps({"ts": "2026-04-03T00:10:00Z", "level": "WARNING", "logger": "wifry", "message": "Running in MOCK MODE", "event": "startup"}),
+            json.dumps({"ts": "2026-04-03T00:10:01Z", "level": "INFO", "logger": "app.services.tc_manager", "message": "Applied impairment on wlan0", "request_id": "req-demo-1", "event": "impairment_apply"}),
+            json.dumps({"ts": "2026-04-03T00:10:05Z", "level": "INFO", "logger": "app.services.capture", "message": "Started capture abc123", "request_id": "req-demo-2", "event": "capture_start"}),
+            json.dumps({"ts": "2026-04-03T00:10:10Z", "level": "INFO", "logger": "app.services.audit_log", "message": "audit.event", "request_id": "req-demo-2", "event": "audit", "action": "sharing.fileio.upload_bundle", "resource_type": "bundle"}),
         ], "total": 5}
 
     cmd = ["journalctl", "-u", "wifry-backend", "-u", "wifry-frontend",
@@ -341,8 +368,7 @@ async def get_app_logs(lines: int = 200, level: str = "all"):
 @router.post("/logs/share")
 async def share_app_logs(lines: int = 500):
     """Collect app logs and upload to file.io for developer sharing."""
-    from ..services import fileio
-    import tempfile
+    from ..services import audit_log, fileio
 
     # Get logs
     if settings.mock_mode:
@@ -367,6 +393,9 @@ async def share_app_logs(lines: int = 500):
         f.write(f"Lines: {lines}\n")
         f.write(f"{'=' * 60}\n\n")
         f.write(log_content)
+        f.write(f"\n\nAudit Events (latest 25)\n")
+        f.write(f"{'=' * 60}\n")
+        f.write(json.dumps(audit_log.list_events(limit=25), indent=2))
 
     upload = await fileio.upload_file(log_path, "15m")
 
@@ -376,7 +405,20 @@ async def share_app_logs(lines: int = 500):
     except OSError:
         pass
 
+    audit_log.record_event(
+        "system.logs.share",
+        resource_type="logs",
+        details={"lines": lines, "upload_success": upload.get("success", False)},
+    )
     return upload
+
+
+@router.get("/audit", response_model=List[AuditEvent])
+async def get_audit_events(limit: int = Query(100, ge=1, le=500), action: str = ""):
+    """Get recent audit events for destructive or external actions."""
+    from ..services import audit_log
+
+    return audit_log.list_events(limit=limit, action=action or None)
 
 
 @router.get("/version")

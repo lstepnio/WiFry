@@ -7,10 +7,11 @@ in a JSON file that persists across restarts.
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from urllib.parse import urlparse
 
 from ..config import settings
 from ..utils.shell import run
+from . import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def get_all() -> dict:
 def update(updates: dict) -> dict:
     """Update settings. Only provided fields are changed."""
     s = _load()
+    changed_keys = []
 
     for key in ["anthropic_api_key", "openai_api_key", "ai_provider",
                  "git_repo_url", "ap_ssid", "ap_password", "ap_channel", "ap_band"]:
@@ -72,6 +74,7 @@ def update(updates: dict) -> dict:
             if isinstance(updates[key], str) and updates[key].startswith("****"):
                 continue
             s[key] = updates[key]
+            changed_keys.append(key)
 
     # Apply to runtime config
     if "anthropic_api_key" in s:
@@ -84,7 +87,15 @@ def update(updates: dict) -> dict:
     _user_settings.update(s)
     _save()
 
-    logger.info("Settings updated: %s", [k for k in updates if k in s])
+    logger.info(
+        "settings.updated",
+        extra={"event": "settings_update", "changed_keys": changed_keys},
+    )
+    audit_log.record_event(
+        "system.settings.update",
+        resource_type="settings",
+        details={"changed_keys": changed_keys},
+    )
     return get_all()
 
 
@@ -101,7 +112,12 @@ async def change_password(current: str, new_password: str) -> dict:
     _user_settings.update(s)
     _save()
 
-    logger.info("Web password changed")
+    logger.info("settings.password_changed", extra={"event": "password_change"})
+    audit_log.record_event(
+        "system.settings.password.change",
+        resource_type="settings",
+        details={"password_set": bool(new_password)},
+    )
     return {"status": "ok", "message": "Password updated"}
 
 
@@ -115,6 +131,16 @@ async def set_git_repo(url: str) -> dict:
     if not settings.mock_mode and url:
         await run("git", "-C", "/opt/wifry", "remote", "set-url", "origin", url, check=False)
 
+    repo_target = _repo_target_for_log(url)
+    logger.info(
+        "settings.git_repo_set",
+        extra={"event": "git_repo_update", "repo_target": repo_target},
+    )
+    audit_log.record_event(
+        "system.settings.git_repo",
+        resource_type="settings",
+        details={"repo_target": repo_target},
+    )
     return {"status": "ok", "git_repo_url": url}
 
 
@@ -138,6 +164,15 @@ def _mask(value: str) -> str:
     if not value or len(value) < 8:
         return "****" if value else ""
     return value[:4] + "****" + value[-4:]
+
+
+def _repo_target_for_log(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.netloc:
+        return parsed.netloc + parsed.path
+    return url.split("@")[-1]
 
 
 # Load on import

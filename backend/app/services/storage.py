@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 from ..config import settings
 from ..utils.shell import run
+from . import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -158,13 +159,29 @@ async def mount_device(device: str) -> dict:
     if settings.mock_mode:
         _active_mount = str(mount_point)
         _save_config(device, str(mount_point))
-        logger.info("Mock: mounted %s at %s", device, mount_point)
+        logger.info(
+            "storage.mounted",
+            extra={"event": "storage_mount", "device": device, "mount_point": str(mount_point), "mock_mode": True},
+        )
+        audit_log.record_event(
+            "system.storage.mount",
+            resource_type="storage",
+            resource_id=device,
+            details={"mount_point": str(mount_point), "mock_mode": True},
+        )
         return {"status": "ok", "device": device, "mount_point": str(mount_point)}
 
     mount_point.mkdir(parents=True, exist_ok=True)
 
     result = await run("mount", device, str(mount_point), sudo=True, check=False)
     if not result.success:
+        audit_log.record_event(
+            "system.storage.mount",
+            outcome="error",
+            resource_type="storage",
+            resource_id=device,
+            details={"message": result.stderr},
+        )
         return {"status": "error", "message": result.stderr}
 
     for subdir in set(_ALL_DATA_SUBDIRS.values()):
@@ -175,7 +192,16 @@ async def mount_device(device: str) -> dict:
     _active_mount = str(mount_point)
     _save_config(device, str(mount_point))
 
-    logger.info("Mounted %s at %s", device, mount_point)
+    logger.info(
+        "storage.mounted",
+        extra={"event": "storage_mount", "device": device, "mount_point": str(mount_point)},
+    )
+    audit_log.record_event(
+        "system.storage.mount",
+        resource_type="storage",
+        resource_id=device,
+        details={"mount_point": str(mount_point)},
+    )
     return {"status": "ok", "device": device, "mount_point": str(mount_point)}
 
 
@@ -186,6 +212,7 @@ async def unmount() -> dict:
     if settings.mock_mode:
         _active_mount = None
         _save_config("", "")
+        audit_log.record_event("system.storage.unmount", resource_type="storage", details={"mock_mode": True})
         return {"status": "ok"}
 
     if _active_mount:
@@ -193,6 +220,8 @@ async def unmount() -> dict:
         _active_mount = None
 
     _save_config("", "")
+    logger.info("storage.unmounted", extra={"event": "storage_unmount"})
+    audit_log.record_event("system.storage.unmount", resource_type="storage")
     return {"status": "ok"}
 
 

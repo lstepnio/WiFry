@@ -24,6 +24,7 @@ from ..models.collaboration import (
     CollaborationStatus,
     CollaborationUser,
 )
+from . import audit_log
 from . import runtime_state
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,15 @@ def set_mode(mode: str) -> dict:
         raise ValueError(f"Invalid mode: {mode}. Use: co-pilot, download") from exc
 
     _save_mode(resolved_mode)
-    logger.info("Collaboration mode set to: %s", resolved_mode.value)
+    logger.info(
+        "collaboration.mode_set",
+        extra={"event": "collaboration_mode", "mode": resolved_mode.value},
+    )
+    audit_log.record_event(
+        "sharing.collaboration.mode",
+        resource_type="collaboration",
+        details={"mode": resolved_mode.value},
+    )
     asyncio.create_task(_broadcast({"type": "mode_change", "mode": resolved_mode.value}))
     return get_status()
 
@@ -147,7 +156,10 @@ async def connect_user(ws: WebSocket, name: str = "", ip: str = "") -> str:
     _connected_users[user_id] = user
     _websockets[user_id] = ws
 
-    logger.info("User connected: %s from %s", display_name, ip)
+    logger.info(
+        "collaboration.user_connected",
+        extra={"event": "collaboration_user", "user_id": user_id, "user_name": display_name, "client_ip": ip},
+    )
 
     await _broadcast({
         "type": "user_joined",
@@ -171,7 +183,10 @@ async def disconnect_user(user_id: str) -> None:
     _websockets.pop(user_id, None)
 
     if user:
-        logger.info("User disconnected: %s", user.name)
+        logger.info(
+            "collaboration.user_disconnected",
+            extra={"event": "collaboration_user", "user_id": user_id, "user_name": user.name},
+        )
         await _broadcast({
             "type": "user_left",
             "user_id": user_id,
@@ -194,7 +209,7 @@ async def disconnect_all_users() -> None:
         except Exception:
             pass
         await disconnect_user(uid)
-    logger.info("All collaboration users disconnected")
+    logger.info("collaboration.all_users_disconnected", extra={"event": "collaboration_disconnect_all"})
 
 
 # --- Message handling ---

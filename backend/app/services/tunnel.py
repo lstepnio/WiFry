@@ -23,6 +23,7 @@ from typing import Optional
 from ..config import settings
 from ..models.tunnel import TunnelStatus
 from ..utils.shell import run
+from . import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,15 @@ async def start_tunnel(port: int = 8080) -> dict:
     if settings.mock_mode:
         _tunnel_url = "https://wifry-demo-abc123.trycloudflare.com"
         _started_at = datetime.now(timezone.utc).isoformat()
-        logger.info("Mock tunnel started: %s", _tunnel_url)
+        logger.info(
+            "tunnel.started",
+            extra={"event": "tunnel_start", "port": port, "mock_mode": True, "tunnel_host": "trycloudflare.com"},
+        )
+        audit_log.record_event(
+            "sharing.tunnel.start",
+            resource_type="tunnel",
+            details={"port": port, "mock_mode": True},
+        )
         return get_status()
 
     # Start cloudflared quick tunnel
@@ -72,6 +81,18 @@ async def start_tunnel(port: int = 8080) -> dict:
 
     if not _tunnel_url:
         logger.warning("Tunnel started but URL not yet detected. Check /api/v1/tunnel/status.")
+        audit_log.record_event(
+            "sharing.tunnel.start",
+            outcome="degraded",
+            resource_type="tunnel",
+            details={"port": port, "url_detected": False},
+        )
+    else:
+        audit_log.record_event(
+            "sharing.tunnel.start",
+            resource_type="tunnel",
+            details={"port": port, "url_detected": True, "tunnel_host": _tunnel_url.split("/", 3)[2]},
+        )
 
     return get_status()
 
@@ -96,7 +117,13 @@ async def _watch_for_url() -> None:
             match = re.search(r"(https://[\w\-]+\.trycloudflare\.com)", line)
             if match:
                 _tunnel_url = match.group(1)
-                logger.info("Tunnel URL: %s", _tunnel_url)
+                logger.info(
+                    "tunnel.url_detected",
+                    extra={
+                        "event": "tunnel_url_detected",
+                        "tunnel_host": _tunnel_url.split("/", 3)[2],
+                    },
+                )
                 break
 
     except asyncio.CancelledError:
@@ -115,6 +142,7 @@ async def stop_tunnel() -> dict:
         _tunnel_url = None
         _started_at = None
         await collaboration.disconnect_all_users()
+        audit_log.record_event("sharing.tunnel.stop", resource_type="tunnel", details={"mock_mode": True})
         return get_status()
 
     if _tunnel_process and _tunnel_process.returncode is None:
@@ -130,7 +158,8 @@ async def stop_tunnel() -> dict:
 
     await collaboration.disconnect_all_users()
 
-    logger.info("Tunnel stopped")
+    logger.info("tunnel.stopped", extra={"event": "tunnel_stop"})
+    audit_log.record_event("sharing.tunnel.stop", resource_type="tunnel")
     return get_status()
 
 
