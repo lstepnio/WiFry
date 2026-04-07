@@ -2,7 +2,8 @@
 
 Manages the lifecycle of test sessions — creation, artifact linking,
 impairment logging, and querying. Sessions correlate all artifacts
-generated during a testing activity.
+generated during a testing activity. Session records and the current
+auto-link target persist across backend restarts.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ from typing import Dict, List, Optional
 
 from ..config import settings
 from ..models.session import (
+    ActiveSessionState,
     Artifact,
     ArtifactType,
     CreateSessionRequest,
@@ -23,16 +25,17 @@ from ..models.session import (
     SessionSummary,
     TestSession,
 )
-from . import storage
+from . import runtime_state, storage
 
 logger = logging.getLogger(__name__)
 
 _sessions: Dict[str, TestSession] = {}
 _artifacts: Dict[str, Artifact] = {}
 
-# Track which session is currently active for auto-linking
 _active_session_id: Optional[str] = None
+_active_session_loaded = False
 _lock = asyncio.Lock()
+_ACTIVE_SESSION_STATE_KEY = "active-session"
 
 
 def _ensure_dir() -> Path:
@@ -70,12 +73,44 @@ def _load_all() -> None:
                     pass
 
 
+def _load_active_session_state() -> None:
+    global _active_session_id, _active_session_loaded
+
+    if _active_session_loaded:
+        return
+
+    _active_session_loaded = True
+    state = runtime_state.load_model(_ACTIVE_SESSION_STATE_KEY, ActiveSessionState)
+    if not state or not state.active_session_id:
+        return
+
+    _load_all()
+    if state.active_session_id in _sessions:
+        _active_session_id = state.active_session_id
+        return
+
+    runtime_state.clear(_ACTIVE_SESSION_STATE_KEY)
+
+
+def _persist_active_session_state(session_id: Optional[str]) -> None:
+    global _active_session_id, _active_session_loaded
+
+    _active_session_id = session_id
+    _active_session_loaded = True
+
+    if session_id:
+        runtime_state.save_model(
+            _ACTIVE_SESSION_STATE_KEY,
+            ActiveSessionState(active_session_id=session_id),
+        )
+    else:
+        runtime_state.clear(_ACTIVE_SESSION_STATE_KEY)
+
+
 # --- Session lifecycle ---
 
 async def create_session(req: CreateSessionRequest) -> TestSession:
     """Create a new test session."""
-    global _active_session_id
-
     session_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
 
@@ -99,7 +134,7 @@ async def create_session(req: CreateSessionRequest) -> TestSession:
 
     async with _lock:
         _sessions[session_id] = session
-        _active_session_id = session_id
+    _persist_active_session_state(session_id)
     _save_session(session)
 
     logger.info("Session created: %s (%s)", session_id, req.name)
@@ -108,7 +143,7 @@ async def create_session(req: CreateSessionRequest) -> TestSession:
 
 async def complete_session(session_id: str) -> TestSession:
     """Mark a session as completed."""
-    global _active_session_id
+    clear_active = False
 
     async with _lock:
         session = _get_session(session_id)
@@ -116,9 +151,10 @@ async def complete_session(session_id: str) -> TestSession:
         session.completed_at = datetime.now(timezone.utc).isoformat()
         session.updated_at = session.completed_at
 
-        if _active_session_id == session_id:
-            _active_session_id = None
+        clear_active = get_active_session_id() == session_id
 
+    if clear_active:
+        _persist_active_session_state(None)
     _save_session(session)
     logger.info("Session completed: %s", session_id)
     return session
@@ -126,14 +162,17 @@ async def complete_session(session_id: str) -> TestSession:
 
 def get_active_session_id() -> Optional[str]:
     """Get the currently active session ID (for auto-linking)."""
+    _load_active_session_state()
     return _active_session_id
 
 
 async def set_active_session(session_id: str) -> None:
     """Set which session is active for auto-linking."""
-    global _active_session_id
     async with _lock:
-        _active_session_id = session_id
+        _load_all()
+        if session_id not in _sessions:
+            raise ValueError(f"Session {session_id} not found")
+    _persist_active_session_state(session_id)
 
 
 # --- Artifact management ---
@@ -195,9 +234,10 @@ async def auto_add_artifact(
     Call this from other services when they generate output to
     auto-correlate with the active test session.
     """
-    if not _active_session_id:
+    active_session_id = get_active_session_id()
+    if not active_session_id:
         return None
-    return await add_artifact(_active_session_id, artifact_type, name, **kwargs)
+    return await add_artifact(active_session_id, artifact_type, name, **kwargs)
 
 
 def log_impairment(
@@ -294,15 +334,12 @@ async def delete_session(session_id: str, discard_data: bool = False) -> dict:
     If discard_data=True, also delete the actual artifact files
     (pcaps, screenshots, reports, etc.) — not just the metadata.
     """
-    global _active_session_id
-
     async with _lock:
         session = _sessions.pop(session_id, None)
         if not session:
             return {"deleted": 0}
 
-        if _active_session_id == session_id:
-            _active_session_id = None
+        clear_active = get_active_session_id() == session_id
 
         artifact_ids = list(session.artifact_ids)
         artifacts_to_clean = []
@@ -310,6 +347,9 @@ async def delete_session(session_id: str, discard_data: bool = False) -> dict:
             art = _artifacts.pop(aid, None)
             if art:
                 artifacts_to_clean.append((aid, art))
+
+    if clear_active:
+        _persist_active_session_state(None)
 
     files_deleted = 0
     for aid, art in artifacts_to_clean:

@@ -22,7 +22,7 @@ CONFIG_PATH = settings.data_dir / "storage.json" if not settings.mock_mode else 
 
 _active_mount: Optional[str] = None
 
-_EXTERNAL_SUBDIRS: Dict[str, str] = {
+_PUBLIC_DATA_SUBDIRS: Dict[str, str] = {
     "captures": "captures",
     "logs": "logs",
     "segments": "segments",
@@ -32,6 +32,15 @@ _EXTERNAL_SUBDIRS: Dict[str, str] = {
     "annotations": "annotations",
     "sessions": "sessions",
     "scenarios": "scenarios",
+}
+
+_PRIVATE_DATA_SUBDIRS: Dict[str, str] = {
+    "runtime_state": "runtime-state",
+}
+
+_ALL_DATA_SUBDIRS: Dict[str, str] = {
+    **_PUBLIC_DATA_SUBDIRS,
+    **_PRIVATE_DATA_SUBDIRS,
 }
 
 _MOCK_PATHS: Dict[str, Path] = {
@@ -44,6 +53,7 @@ _MOCK_PATHS: Dict[str, Path] = {
     "annotations": Path("/tmp/wifry-annotations"),
     "sessions": Path("/tmp/wifry-sessions"),
     "scenarios": Path("/tmp/wifry-scenarios"),
+    "runtime_state": Path("/tmp/wifry-runtime-state"),
 }
 
 
@@ -58,16 +68,17 @@ def _default_paths() -> Dict[str, Path]:
         "annotations": settings.data_dir / "annotations",
         "sessions": settings.data_dir / "sessions",
         "scenarios": settings.data_dir / "scenarios",
+        "runtime_state": settings.data_dir / "runtime-state",
     }
 
 
 def get_data_path(name: str) -> Path:
     """Resolve a named runtime data path."""
-    if name not in _EXTERNAL_SUBDIRS:
+    if name not in _ALL_DATA_SUBDIRS:
         raise ValueError(f"Unknown data path '{name}'")
 
     if _active_mount:
-        return Path(_active_mount) / _EXTERNAL_SUBDIRS[name]
+        return Path(_active_mount) / _ALL_DATA_SUBDIRS[name]
 
     if settings.mock_mode:
         return _MOCK_PATHS[name]
@@ -82,9 +93,14 @@ def ensure_data_path(name: str) -> Path:
     return path
 
 
-def get_data_paths() -> dict:
-    """Get the current data paths (external, mock, or default)."""
-    return {name: str(get_data_path(name)) for name in _EXTERNAL_SUBDIRS}
+def get_data_paths(include_private: bool = False) -> dict:
+    """Get the current public data paths.
+
+    Private runtime-state paths stay hidden by default so they are not exposed
+    through sharing or bundle-style endpoints.
+    """
+    names = _ALL_DATA_SUBDIRS if include_private else _PUBLIC_DATA_SUBDIRS
+    return {name: str(get_data_path(name)) for name in names}
 
 
 async def detect_devices() -> List[dict]:
@@ -151,7 +167,7 @@ async def mount_device(device: str) -> dict:
     if not result.success:
         return {"status": "error", "message": result.stderr}
 
-    for subdir in set(_EXTERNAL_SUBDIRS.values()):
+    for subdir in set(_ALL_DATA_SUBDIRS.values()):
         (mount_point / subdir).mkdir(exist_ok=True)
 
     await run("chown", "-R", "wifry:wifry", str(mount_point), sudo=True, check=False)

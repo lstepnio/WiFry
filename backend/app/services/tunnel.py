@@ -3,6 +3,8 @@
 Uses `cloudflared` to create a temporary tunnel that exposes
 the WiFry web UI and file-sharing endpoints to a public URL.
 No Cloudflare account needed — Quick Tunnels are free and ephemeral.
+Tunnel process state and public URLs are intentionally not restored
+after a backend restart.
 
 The tunnel exposes a read-only file share service with:
   - Test reports (HTML)
@@ -19,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..config import settings
+from ..models.tunnel import TunnelStatus
 from ..utils.shell import run
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,9 @@ async def start_tunnel(port: int = 8080) -> dict:
       https://random-words.trycloudflare.com
     """
     global _tunnel_process, _tunnel_url, _started_at
+
+    if settings.mock_mode and _tunnel_url:
+        return get_status()
 
     if _tunnel_process and _tunnel_process.returncode is None:
         return get_status()
@@ -103,9 +109,12 @@ async def stop_tunnel() -> dict:
     """Stop the Cloudflare tunnel."""
     global _tunnel_process, _tunnel_url, _started_at
 
+    from . import collaboration
+
     if settings.mock_mode:
         _tunnel_url = None
         _started_at = None
+        await collaboration.disconnect_all_users()
         return get_status()
 
     if _tunnel_process and _tunnel_process.returncode is None:
@@ -119,8 +128,6 @@ async def stop_tunnel() -> dict:
     _tunnel_url = None
     _started_at = None
 
-    # Clean up all collaboration users when tunnel stops
-    from . import collaboration
     await collaboration.disconnect_all_users()
 
     logger.info("Tunnel stopped")
@@ -135,13 +142,13 @@ def get_status() -> dict:
     else:
         running = _tunnel_process is not None and _tunnel_process.returncode is None
 
-    return {
-        "active": running,
-        "url": _tunnel_url,
-        "started_at": _started_at,
-        "share_url": f"{_tunnel_url}/api/v1/share" if _tunnel_url else None,
-        "message": f"Sharing via {_tunnel_url}" if _tunnel_url else "Tunnel not active",
-    }
+    return TunnelStatus(
+        active=running,
+        url=_tunnel_url,
+        started_at=_started_at,
+        share_url=f"{_tunnel_url}/api/v1/share" if _tunnel_url else None,
+        message=f"Sharing via {_tunnel_url}" if _tunnel_url else "Tunnel not active",
+    ).model_dump(mode="json")
 
 
 async def check_cloudflared() -> dict:

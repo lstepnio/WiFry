@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from ..models.session import (
+    ActiveSessionResponse,
     Artifact,
     ArtifactType,
     CreateSessionRequest,
@@ -48,7 +49,7 @@ async def create_session(req: CreateSessionRequest):
     return await session_manager.create_session(req)
 
 
-@router.get("/active")
+@router.get("/active", response_model=ActiveSessionResponse)
 async def get_active_session():
     """Get the currently active session (for auto-linking)."""
     sid = session_manager.get_active_session_id()
