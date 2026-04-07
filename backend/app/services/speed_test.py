@@ -12,6 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import settings
@@ -21,6 +22,34 @@ logger = logging.getLogger(__name__)
 
 _server_process: Optional[asyncio.subprocess.Process] = None
 _results: Dict[str, dict] = {}
+
+RESULTS_DIR = Path("/var/lib/wifry/speedtests") if not settings.mock_mode else Path("/tmp/wifry-speedtests")
+
+
+def _ensure_dir() -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_result(result: dict) -> None:
+    """Persist a speed test result to disk."""
+    _ensure_dir()
+    rid = result.get("id", "unknown")
+    (RESULTS_DIR / f"{rid}.json").write_text(json.dumps(result, indent=2))
+
+
+def _load_results() -> None:
+    """Load persisted results from disk into memory."""
+    _ensure_dir()
+    for f in RESULTS_DIR.glob("*.json"):
+        try:
+            data = json.loads(f.read_text())
+            _results[data["id"]] = data
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+
+# Load on import
+_load_results()
 
 
 @dataclass
@@ -110,6 +139,7 @@ async def run_client_test(
         data = json.loads(result.stdout)
         parsed = _parse_iperf3_json(test_id, target, now, data)
         _results[test_id] = parsed
+        _save_result(parsed)
         return parsed
     except (json.JSONDecodeError, KeyError) as e:
         return {"id": test_id, "error": str(e), "started_at": now}
@@ -117,7 +147,23 @@ async def run_client_test(
 
 def get_results() -> List[dict]:
     """Get all stored speed test results."""
-    return list(_results.values())
+    return sorted(_results.values(), key=lambda r: r.get("started_at", ""), reverse=True)
+
+
+def delete_result(test_id: str) -> None:
+    """Delete a single speed test result."""
+    _results.pop(test_id, None)
+    (RESULTS_DIR / f"{test_id}.json").unlink(missing_ok=True)
+
+
+def delete_all_results() -> int:
+    """Delete all speed test results. Returns count deleted."""
+    count = len(_results)
+    _results.clear()
+    _ensure_dir()
+    for f in RESULTS_DIR.glob("*.json"):
+        f.unlink(missing_ok=True)
+    return count
 
 
 def _parse_iperf3_json(test_id: str, target: str, started_at: str, data: dict) -> dict:
@@ -164,6 +210,7 @@ async def run_ookla_test(server_id: str = "") -> dict:
     if settings.mock_mode:
         result = _mock_ookla_result(test_id, now)
         _results[test_id] = result
+        _save_result(result)
         return result
 
     cmd = ["speedtest", "--format=json", "--accept-license", "--accept-gdpr"]
@@ -179,6 +226,7 @@ async def run_ookla_test(server_id: str = "") -> dict:
         data = json.loads(result.stdout)
         parsed = _parse_ookla_json(test_id, now, data)
         _results[test_id] = parsed
+        _save_result(parsed)
         return parsed
     except (json.JSONDecodeError, KeyError) as e:
         return {"id": test_id, "type": "ookla", "error": str(e), "started_at": now}

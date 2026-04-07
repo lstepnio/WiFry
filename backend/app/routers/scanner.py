@@ -93,6 +93,20 @@ async def get_speedtest_results():
     return speed_test.get_results()
 
 
+@router.delete("/api/v1/speedtest/results/{test_id}")
+async def delete_speedtest_result(test_id: str):
+    """Delete a single speed test result."""
+    speed_test.delete_result(test_id)
+    return {"status": "ok"}
+
+
+@router.delete("/api/v1/speedtest/results")
+async def delete_all_speedtest_results():
+    """Delete all speed test results."""
+    count = speed_test.delete_all_results()
+    return {"status": "ok", "deleted": count}
+
+
 # --- Ookla Speedtest ---
 
 @router.post("/api/v1/speedtest/ookla")
