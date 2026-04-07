@@ -23,6 +23,7 @@ interface FullNetworkConfig {
 
 interface NetworkProfile {
   id: string; name: string; description: string;
+  is_boot_profile?: boolean;
 }
 
 function Input({ label, value, onChange, type = 'text', title = '', disabled = false }: {
@@ -129,6 +130,13 @@ export default function NetworkConfigPanel() {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-green-700 bg-green-950/30 p-4">
+        <h3 className="text-sm font-semibold text-green-300">Supported setup workflow</h3>
+        <p className="mt-1 text-xs text-green-200">
+          Use Network Config to set the WiFi hotspot, Ethernet uplink, and reusable boot profiles before running tests. The fallback IP stays available as the recovery path.
+        </p>
+      </div>
+
       {/* First boot banner */}
       {config.first_boot && (
         <div className="rounded-lg border border-yellow-500 bg-yellow-950/40 p-4">
@@ -244,13 +252,13 @@ export default function NetworkConfigPanel() {
               <div key={p.id} className="flex items-center justify-between rounded border border-gray-700 bg-gray-800/50 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-gray-300">{p.name}</span>
-                  {(p as any).is_boot_profile && <span className="rounded bg-yellow-900 px-1.5 py-0.5 text-[9px] text-yellow-300">boot profile</span>}
+                  {p.is_boot_profile && <span className="rounded bg-yellow-900 px-1.5 py-0.5 text-[9px] text-yellow-300">boot profile</span>}
                   {p.description && <span className="text-xs text-gray-500">{p.description}</span>}
                 </div>
                 <div className="flex items-center gap-1">
                   <button onClick={() => applyProfile(p.id)}
                     className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700">Apply</button>
-                  {!(p as any).is_boot_profile ? (
+                  {!p.is_boot_profile ? (
                     <button onClick={async () => {
                       if (!confirm('Set as boot profile? If WiFi settings are wrong, use fallback IP (169.254.42.1) to recover.')) return;
                       await fetch(`/api/v1/network-config/profiles/${p.id}/set-boot`, { method: 'POST' });

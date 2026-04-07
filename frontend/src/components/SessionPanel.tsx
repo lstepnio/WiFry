@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 interface SessionSummary {
   id: string;
@@ -66,6 +67,7 @@ function formatBytes(b: number): string {
 }
 
 export default function SessionPanel() {
+  const { isEnabled } = useFeatureFlags();
   const listFetcher = useCallback(async () => {
     const res = await fetch('/api/v1/sessions');
     return res.json();
@@ -87,6 +89,7 @@ export default function SessionPanel() {
   const [newDeviceSerial, setNewDeviceSerial] = useState('');
   const [sharing, setSharing] = useState(false);
   const [shareResult, setShareResult] = useState<{ link?: string; error?: string } | null>(null);
+  const bundleSharingEnabled = isEnabled('sharing_fileio');
 
   const loadDetail = async (id: string) => {
     setSelectedId(id);
@@ -182,15 +185,23 @@ export default function SessionPanel() {
           {detail.notes && <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{detail.notes}</p>}
           {detail.description && <p className="mt-1 text-xs text-gray-500">{detail.description}</p>}
 
+          <div className={`mt-4 rounded-lg border p-3 text-xs ${bundleSharingEnabled ? 'border-green-700 bg-green-950/30 text-green-200' : 'border-yellow-700 bg-yellow-950/30 text-yellow-200'}`}>
+            {bundleSharingEnabled
+              ? 'Supported sharing workflow: keep evidence inside a Session, then use "Bundle + Share" to generate one expiring link with the full session context.'
+              : 'Session bundle sharing is disabled right now. You can still generate a local bundle from this session.'}
+          </div>
+
           <div className="mt-4 flex gap-2">
             {detail.status === 'active' && (
               <button onClick={() => completeSession(detail.id)} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Complete Session</button>
             )}
             <button onClick={() => generateBundle(detail.id)} className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700">Generate Bundle</button>
-            <button onClick={() => generateAndShare(detail.id)} disabled={sharing}
-              className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-              {sharing ? 'Sharing...' : 'Bundle + Share'}
-            </button>
+            {bundleSharingEnabled && (
+              <button onClick={() => generateAndShare(detail.id)} disabled={sharing}
+                className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                {sharing ? 'Sharing...' : 'Bundle + Share'}
+              </button>
+            )}
             <button onClick={async () => {
               if (!confirm(`DISCARD session "${detail.name}" and ALL its data files? This cannot be undone.`)) return;
               await fetch(`/api/v1/sessions/${detail.id}/discard`, { method: 'POST' });
@@ -282,6 +293,10 @@ export default function SessionPanel() {
             — all new artifacts will auto-link here
           </div>
         )}
+
+        <p className="mb-4 text-sm text-gray-500">
+          Start here for the supported workflow: create a session first, collect captures and device evidence into it, then generate or share a support bundle from the session detail.
+        </p>
 
         <div className="mb-4 flex gap-2">
           <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Session name (e.g. 'STB-123 Buffering Test')"
