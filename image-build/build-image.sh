@@ -217,7 +217,6 @@ echo "Configuration files written."
 echo "Installing systemd services..."
 
 cp "$INSTALL_DIR/setup/wifry-backend.service" "$MOUNT_DIR/etc/systemd/system/"
-cp "$INSTALL_DIR/setup/wifry-frontend.service" "$MOUNT_DIR/etc/systemd/system/"
 cp "$INSTALL_DIR/setup/wifry-recovery.service" "$MOUNT_DIR/etc/systemd/system/"
 
 # Enable services (create symlinks manually since systemctl won't work outside chroot)
