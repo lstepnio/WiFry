@@ -114,6 +114,10 @@ export default function Dashboard() {
           if (msg.type === 'navigate' && msg.tab) {
             ignoreNextNavigate.current = true;
             setTab(msg.tab as Tab);
+            if (msg.subTab) {
+              if (msg.tab === 'impairments') setImpSubTab(msg.subTab);
+              if (msg.tab === 'system') setSysSubTab(msg.subTab);
+            }
           } else if (msg.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong' }));
           }
@@ -140,21 +144,33 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Send navigation messages when user changes tab
-  const handleTabChange = useCallback((newTab: Tab) => {
-    setTab(newTab);
-    if (newTab !== 'captures') setAnalyzingCaptureId(null);
-    if (newTab !== 'streams') setSelectedStreamId(null);
-
-    // Broadcast to other users (skip if this was a mirrored navigate)
+  const sendNavigate = useCallback((mainTab: string, subTab?: string) => {
     if (ignoreNextNavigate.current) {
       ignoreNextNavigate.current = false;
       return;
     }
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'navigate', tab: newTab }));
+      wsRef.current.send(JSON.stringify({ type: 'navigate', tab: mainTab, subTab }));
     }
   }, []);
+
+  // Send navigation messages when user changes tab
+  const handleTabChange = useCallback((newTab: Tab) => {
+    setTab(newTab);
+    if (newTab !== 'captures') setAnalyzingCaptureId(null);
+    if (newTab !== 'streams') setSelectedStreamId(null);
+    sendNavigate(newTab);
+  }, [sendNavigate]);
+
+  const handleImpSubTabChange = useCallback((sub: ImpairmentSubTab) => {
+    setImpSubTab(sub);
+    sendNavigate('impairments', sub);
+  }, [sendNavigate]);
+
+  const handleSysSubTabChange = useCallback((sub: SystemSubTab) => {
+    setSysSubTab(sub);
+    sendNavigate('system', sub);
+  }, [sendNavigate]);
 
   // Filter tabs based on feature flags
   const visibleTabs = TABS.filter(t => {
@@ -223,7 +239,7 @@ export default function Dashboard() {
         {/* Impairments — sub-tabbed, filtered by feature flags */}
         {tab === 'impairments' && (
           <div>
-            <SubTabNav tabs={visibleImpSubTabs} active={impSubTab} onChange={setImpSubTab} />
+            <SubTabNav tabs={visibleImpSubTabs} active={impSubTab} onChange={handleImpSubTabChange} />
             {impSubTab === 'profiles' && isEnabled('impairments_profiles') && <ProfileManager />}
             {impSubTab === 'network' && isEnabled('impairments_network') && <ImpairmentPanel />}
             {impSubTab === 'wifi' && isEnabled('impairments_wifi') && <WifiImpairmentPanel />}
@@ -268,7 +284,7 @@ export default function Dashboard() {
         {/* System — sub-tabbed, filtered by feature flags */}
         {tab === 'system' && (
           <div>
-            <SubTabNav tabs={visibleSysSubTabs} active={sysSubTab} onChange={setSysSubTab} />
+            <SubTabNav tabs={visibleSysSubTabs} active={sysSubTab} onChange={handleSysSubTabChange} />
             {sysSubTab === 'overview' && (
               <div className="space-y-6">
                 <SystemInfo />

@@ -116,11 +116,12 @@ export default function CollabOverlay({ onNavigate }: { onNavigate?: (tab: strin
   };
 
   const userCount = status?.user_count ?? 0;
+  const remoteUserCount = (status?.connected_users ?? []).filter(u => !u.is_local).length;
   const mode = status?.mode ?? 'co-pilot';
   const modeInfo = MODE_LABELS[mode] || MODE_LABELS['co-pilot'];
 
-  // Don't show overlay if only 1 user connected
-  if (userCount <= 1 && !showPanel) return null;
+  // Only show overlay when there are remote (non-local) users connected
+  if (remoteUserCount <= 0 && !showPanel) return null;
 
   return (
     <>

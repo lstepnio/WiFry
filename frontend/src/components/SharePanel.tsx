@@ -60,7 +60,19 @@ export default function SharePanel() {
   };
 
   const copyUrl = (url: string, id: string) => {
-    navigator.clipboard.writeText(url);
+    try {
+      navigator.clipboard.writeText(url);
+    } catch {
+      // Fallback for non-HTTPS contexts
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
     setCopied(id);
     setTimeout(() => setCopied(''), 2000);
   };
