@@ -29,16 +29,15 @@ const MODE_LABELS: Record<string, { label: string; color: string; desc: string }
   'download': { label: 'Download', color: 'bg-gray-600', desc: 'File access only' },
 };
 
-export default function CollabOverlay({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSocket | null> }) {
   const [status, setStatus] = useState<CollabStatus | null>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
-  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const [chat] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState(false);
-  const [lastAction, setLastAction] = useState('');
+  const [lastAction] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Poll status
+  // Poll status (REST only — no extra WebSocket connection)
   useEffect(() => {
     const load = async () => {
       try {
@@ -47,62 +46,13 @@ export default function CollabOverlay({ onNavigate }: { onNavigate?: (tab: strin
       } catch {}
     };
     load();
-    pollRef.current = setInterval(load, 5000);
+    pollRef.current = setInterval(load, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  // WebSocket connection
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/collab/ws?name=`;
-
-    try {
-      const socket = new WebSocket(wsUrl);
-
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-
-        switch (data.type) {
-          case 'init':
-            setStatus(prev => prev ? { ...prev, connected_users: data.users, mode: data.mode } : prev);
-            break;
-          case 'user_joined':
-          case 'user_left':
-            setStatus(prev => prev ? { ...prev, user_count: data.user_count } : prev);
-            break;
-          case 'navigate':
-            if (onNavigate) onNavigate(data.tab);
-            setLastAction(`${data.by} navigated to ${data.tab}`);
-            break;
-          case 'action':
-            setLastAction(`${data.by}: ${data.action}`);
-            break;
-          case 'state_update':
-            setLastAction(data.action);
-            break;
-          case 'chat':
-            setChat(prev => [...prev.slice(-50), { user_name: data.user_name, message: data.message, timestamp: data.timestamp }]);
-            break;
-          case 'mode_change':
-            setStatus(prev => prev ? { ...prev, mode: data.mode } : prev);
-            break;
-          case 'error':
-            setLastAction(`Error: ${data.message}`);
-            break;
-        }
-      };
-
-      socket.onclose = () => setTimeout(() => { /* reconnect logic */ }, 3000);
-      setWs(socket);
-
-      return () => socket.close();
-    } catch {
-      // WebSocket not available (e.g., dev mode proxy issue)
-    }
-  }, [onNavigate]);
-
   const sendChat = () => {
-    if (!ws || !chatInput.trim()) return;
+    const ws = wsRef?.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !chatInput.trim()) return;
     ws.send(JSON.stringify({ type: 'chat', message: chatInput }));
     setChatInput('');
   };
@@ -119,11 +69,8 @@ export default function CollabOverlay({ onNavigate }: { onNavigate?: (tab: strin
   const mode = status?.mode ?? 'co-pilot';
   const modeInfo = MODE_LABELS[mode] || MODE_LABELS['co-pilot'];
 
-  // Each browser tab opens 2 WebSocket connections (Dashboard + CollabOverlay),
-  // so a single user shows as 2. Show overlay when there are more connections
-  // than just this tab (i.e., another browser/user is connected).
-  // With 1 tab: 2 connections. With 2 tabs: 4 connections.
-  if (userCount <= 2 && !showPanel) return null;
+  // Show overlay when more than 1 user is connected (another tab/browser)
+  if (userCount <= 1 && !showPanel) return null;
 
   return (
     <>

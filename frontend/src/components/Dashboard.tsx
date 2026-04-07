@@ -87,14 +87,15 @@ function SubTabNav<T extends string>({ tabs, active, onChange }: {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObject<WebSocket | null> }) {
   const [tab, setTab] = useState<Tab>('sessions');
   const [impSubTab, setImpSubTab] = useState<ImpairmentSubTab>('profiles');
   const [sysSubTab, setSysSubTab] = useState<SystemSubTab>('overview');
   const [analyzingCaptureId, setAnalyzingCaptureId] = useState<string | null>(null);
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const { isEnabled } = useFeatureFlags();
-  const wsRef = useRef<WebSocket | null>(null);
+  const localWsRef = useRef<WebSocket | null>(null);
+  const wsRef = collabWsRef ?? localWsRef;
   const ignoreNextNavigate = useRef(false);
 
   // Collaboration WebSocket for navigation mirroring (auto-reconnect)
@@ -106,7 +107,7 @@ export default function Dashboard() {
       if (!alive) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/collab/ws?name=`);
-      wsRef.current = ws;
+      if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = ws;
 
       ws.onmessage = (event) => {
         try {
@@ -125,7 +126,7 @@ export default function Dashboard() {
       };
 
       ws.onclose = () => {
-        wsRef.current = null;
+        if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = null;
         if (alive) {
           reconnectTimer = setTimeout(connect, 3000);
         }
@@ -139,8 +140,8 @@ export default function Dashboard() {
     return () => {
       alive = false;
       clearTimeout(reconnectTimer);
-      wsRef.current?.close();
-      wsRef.current = null;
+      if (wsRef.current) wsRef.current.close();
+      if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = null;
     };
   }, []);
 
