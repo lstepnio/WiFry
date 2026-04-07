@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import PanelState from './PanelState';
+import { useNotification } from '../hooks/useNotification';
 
 interface TunnelStatus {
   active: boolean;
@@ -29,6 +31,7 @@ const MODE_LABELS: Record<string, { label: string; desc: string }> = {
 };
 
 export default function SharePanel() {
+  const { notify } = useNotification();
   const { isEnabled } = useFeatureFlags();
   const liveRemoteAccessEnabled = isEnabled('sharing_tunnel');
   const collaborationEnabled = isEnabled('collaboration');
@@ -46,9 +49,9 @@ export default function SharePanel() {
     }
 
     const res = await fetch('/api/v1/tunnel/status');
-    return res.json();
+    return res.ok ? res.json() : null;
   }, [liveRemoteAccessEnabled]);
-  const { data: status, refresh } = useApi<TunnelStatus>(tunnelFetcher, liveRemoteAccessEnabled ? 5000 : undefined);
+  const { data: status, loading: tunnelLoading, error: tunnelError, refresh } = useApi<TunnelStatus | null>(tunnelFetcher, liveRemoteAccessEnabled ? 5000 : undefined);
 
   const collabFetcher = useCallback(async () => {
     if (!collaborationEnabled) {
@@ -56,9 +59,9 @@ export default function SharePanel() {
     }
 
     const res = await fetch('/api/v1/collab/status');
-    return res.json();
+    return res.ok ? res.json() : null;
   }, [collaborationEnabled]);
-  const { data: collabStatus, refresh: refreshCollab } = useApi<CollabStatus>(collabFetcher, collaborationEnabled ? 3000 : undefined);
+  const { data: collabStatus, loading: collabLoading, error: collabError, refresh: refreshCollab } = useApi<CollabStatus | null>(collabFetcher, collaborationEnabled ? 3000 : undefined);
 
   const [toggling, setToggling] = useState(false);
   const [copied, setCopied] = useState('');
@@ -70,11 +73,14 @@ export default function SharePanel() {
     setToggling(true);
     try {
       const endpoint = status?.active ? 'stop' : 'start';
-      await fetch(`/api/v1/tunnel/${endpoint}`, { method: 'POST' });
+      const res = await fetch(`/api/v1/tunnel/${endpoint}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Tunnel error');
+
       refresh();
       refreshCollab();
+      notify(status?.active ? 'Live remote access stopped' : 'Live remote access started', 'success');
     } catch {
-      alert('Tunnel error');
+      notify('Tunnel error', 'error');
     } finally {
       setToggling(false);
     }
@@ -83,18 +89,23 @@ export default function SharePanel() {
   const setMode = async (mode: string) => {
     setUpdatingMode(mode);
     try {
-      await fetch('/api/v1/collab/mode', {
+      const res = await fetch('/api/v1/collab/mode', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
       });
+      if (!res.ok) throw new Error('Failed to update collaboration mode');
+
       refreshCollab();
+      notify(`Collaboration mode set to ${MODE_LABELS[mode]?.label ?? mode}`, 'success');
+    } catch {
+      notify('Failed to update collaboration mode.', 'error');
     } finally {
       setUpdatingMode(null);
     }
   };
 
-  const copyUrl = (url: string, id: string) => {
+  const copyUrl = (url: string, id: string, label: string) => {
     try {
       navigator.clipboard.writeText(url);
     } catch {
@@ -110,7 +121,16 @@ export default function SharePanel() {
 
     setCopied(id);
     setTimeout(() => setCopied(''), 2000);
+    notify(`${label} copied to clipboard`, 'success');
   };
+
+  if (tunnelLoading && liveRemoteAccessEnabled) {
+    return <PanelState title="Loading Remote Access" message="Checking tunnel status and collaboration details." variant="loading" />;
+  }
+
+  if (tunnelError && liveRemoteAccessEnabled) {
+    return <PanelState title="Remote Access Unavailable" message="Unable to load remote-access status right now." variant="error" />;
+  }
 
   return (
     <div className="space-y-4">
@@ -148,7 +168,7 @@ export default function SharePanel() {
               disabled={toggling}
               className={`rounded-lg px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${status?.active ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
             >
-              {toggling ? '...' : status?.active ? 'Stop Tunnel' : 'Start Tunnel'}
+              {toggling ? 'Working...' : status?.active ? 'Stop Tunnel' : 'Start Tunnel'}
             </button>
           </div>
 
@@ -157,7 +177,7 @@ export default function SharePanel() {
               <div className="flex items-center gap-2">
                 <code className="flex-1 rounded bg-gray-900 px-3 py-1.5 font-mono text-xs text-green-300">{status.url}</code>
                 <button
-                  onClick={() => copyUrl(status.url!, 'tunnel')}
+                  onClick={() => copyUrl(status.url ?? '', 'tunnel', 'Tunnel URL')}
                   className="rounded bg-green-600 px-2 py-1.5 text-xs text-white hover:bg-green-700"
                 >
                   {copied === 'tunnel' ? 'Copied!' : 'Copy'}
@@ -168,9 +188,7 @@ export default function SharePanel() {
               </p>
             </div>
           ) : (
-            <p className="text-xs text-gray-500">
-              Tunnel access is off. Start it only when you need a live troubleshooting session, then stop it when you are done.
-            </p>
+            <PanelState title="Tunnel Not Active" message="Tunnel access is off. Start it only when you need a live troubleshooting session, then stop it when you are done." variant="empty" />
           )}
         </div>
       )}
@@ -182,41 +200,51 @@ export default function SharePanel() {
             Experimental. This synchronizes navigation for remote users connected through the live tunnel.
           </p>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {Object.entries(MODE_LABELS).map(([mode, info]) => (
-              <button
-                key={mode}
-                onClick={() => setMode(mode)}
-                disabled={updatingMode === mode}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                  (collabStatus?.mode ?? 'download') === mode
-                    ? 'bg-blue-600 text-white'
-                    : 'border border-gray-300 text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800'
-                }`}
-              >
-                {info.label}
-              </button>
-            ))}
-          </div>
-
-          <p className="mt-2 text-xs text-gray-500">
-            {MODE_LABELS[collabStatus?.mode ?? 'download']?.desc ?? MODE_LABELS.download.desc}
-          </p>
-
-          <div className="mt-4 rounded border border-gray-700 bg-gray-800/40 px-3 py-2">
-            <div className="text-xs text-gray-400">
-              Connected users: <span className="font-medium text-gray-200">{collabStatus?.user_count ?? 0}</span>
-            </div>
-            {(collabStatus?.connected_users ?? []).length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {(collabStatus?.connected_users ?? []).map((user) => (
-                  <span key={user.id} className="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-200">
-                    {user.name}
-                  </span>
+          {collabLoading ? (
+            <PanelState title="Loading Collaboration" message="Checking collaboration mode and connected users." variant="loading" />
+          ) : collabError || !collabStatus ? (
+            <PanelState title="Collaboration Unavailable" message="Unable to load collaboration status right now." variant="error" />
+          ) : (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {Object.entries(MODE_LABELS).map(([mode, info]) => (
+                  <button
+                    key={mode}
+                    onClick={() => setMode(mode)}
+                    disabled={updatingMode === mode}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      collabStatus.mode === mode
+                        ? 'bg-blue-600 text-white'
+                        : 'border border-gray-300 text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800'
+                    }`}
+                  >
+                    {updatingMode === mode ? 'Updating...' : info.label}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
+
+              <p className="mt-2 text-xs text-gray-500">
+                {MODE_LABELS[collabStatus.mode]?.desc ?? MODE_LABELS.download.desc}
+              </p>
+
+              {collabStatus.connected_users.length > 0 ? (
+                <div className="mt-4 rounded border border-gray-700 bg-gray-800/40 px-3 py-2">
+                  <div className="text-xs text-gray-400">
+                    Connected users: <span className="font-medium text-gray-200">{collabStatus.user_count}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {collabStatus.connected_users.map((user) => (
+                      <span key={user.id} className="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] text-gray-200">
+                        {user.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <PanelState title="No Remote Users Connected" message="Collaboration is available, but nobody is connected to the live session right now." variant="empty" />
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
