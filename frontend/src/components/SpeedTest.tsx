@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
+import { useNotification } from '../hooks/useNotification';
 
 interface SpeedResult {
   id: string;
@@ -21,6 +23,8 @@ interface SpeedResult {
 }
 
 export default function SpeedTest() {
+  const confirmAction = useConfirm();
+  const { notify } = useNotification();
   const [target, setTarget] = useState('127.0.0.1');
   const [duration, setDuration] = useState(10);
   const [running, setRunning] = useState<string | null>(null);
@@ -37,7 +41,7 @@ export default function SpeedTest() {
       const params = new URLSearchParams({ target, duration: String(duration) });
       await fetch(`/api/v1/speedtest/run?${params}`, { method: 'POST' });
       refresh();
-    } catch { alert('iperf3 test failed'); }
+    } catch { notify('iperf3 test failed', 'error'); }
     finally { setRunning(null); }
   };
 
@@ -46,7 +50,7 @@ export default function SpeedTest() {
     try {
       await fetch('/api/v1/speedtest/ookla', { method: 'POST' });
       refresh();
-    } catch { alert('Ookla test failed'); }
+    } catch { notify('Ookla test failed', 'error'); }
     finally { setRunning(null); }
   };
 
@@ -56,7 +60,7 @@ export default function SpeedTest() {
   };
 
   const deleteAll = async () => {
-    if (!confirm(`Delete all ${(results ?? []).length} result(s)?`)) return;
+    if (!await confirmAction({ title: 'Delete All Results', message: `Delete all ${(results ?? []).length} result(s)?`, confirmLabel: 'Delete All', confirmTone: 'danger' })) return;
     await fetch('/api/v1/speedtest/results', { method: 'DELETE' });
     refresh();
   };

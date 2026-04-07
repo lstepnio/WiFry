@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import type { AdbDevice, AdbShellResult, LogcatLine, LogcatSession } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
+import { useNotification } from '../hooks/useNotification';
 
 const STATE_COLORS: Record<string, string> = {
   connected: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
@@ -39,6 +41,8 @@ interface AdbFile {
 }
 
 function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (cmd: string) => void }) {
+  const confirmAction = useConfirm();
+  const { notify } = useNotification();
   const filesFetcher = useCallback(async () => {
     const res = await fetch('/api/v1/adb/files');
     return res.json();
@@ -53,7 +57,7 @@ function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (c
       const res = await fetch(`/api/v1/adb/screencap/${encodeURIComponent(serial)}`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       refreshFiles();
-    } catch { alert('Screenshot failed'); }
+    } catch { notify('Screenshot failed', 'error'); }
     finally { setCapturing(null); }
   };
 
@@ -63,7 +67,7 @@ function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (c
       const res = await fetch(`/api/v1/adb/bugreport/${encodeURIComponent(serial)}`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       refreshFiles();
-    } catch { alert('Bugreport failed'); }
+    } catch { notify('Bugreport failed', 'error'); }
     finally { setCapturing(null); }
   };
 
@@ -82,16 +86,16 @@ function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (c
       const data = await res.json();
       if (data.link) {
         navigator.clipboard.writeText(data.link);
-        alert(`Link copied: ${data.link}\n(expires in 15 min, single download)`);
+        notify(`Link copied: ${data.link} (expires in 15 min, single download)`, 'success');
       } else {
-        alert(data.error || 'Share failed');
+        notify(data.error || 'Share failed', 'error');
       }
-    } catch { alert('Share failed'); }
+    } catch { notify('Share failed', 'error'); }
     finally { setSharing(null); }
   };
 
   const deleteFile = async (filename: string) => {
-    if (!confirm(`Delete ${filename}?`)) return;
+    if (!await confirmAction({ title: 'Delete File', message: `Delete ${filename}?`, confirmLabel: 'Delete', confirmTone: 'danger' })) return;
     await fetch(`/api/v1/adb/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
     refreshFiles();
   };
@@ -99,14 +103,14 @@ function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (c
   const deleteAllFiles = async () => {
     const allFiles = files ?? [];
     if (allFiles.length === 0) return;
-    if (!confirm(`Delete all ${allFiles.length} saved file(s)?`)) return;
+    if (!await confirmAction({ title: 'Delete All Files', message: `Delete all ${allFiles.length} saved file(s)?`, confirmLabel: 'Delete All', confirmTone: 'danger' })) return;
     try {
       for (const f of allFiles) {
         await fetch(`/api/v1/adb/files/${encodeURIComponent(f.filename)}`, { method: 'DELETE' });
       }
       refreshFiles();
     } catch {
-      alert('Failed to delete some files');
+      notify('Failed to delete some files', 'error');
       refreshFiles();
     }
   };
@@ -177,6 +181,7 @@ function DataCollection({ serial, onShellCmd }: { serial: string; onShellCmd: (c
 }
 
 export default function AdbPanel() {
+  const { notify } = useNotification();
   const deviceFetcher = useCallback(() => api.getAdbDevices(), []);
   const { data: devices, refresh: refreshDevices } = useApi<AdbDevice[]>(deviceFetcher, 5000);
 
@@ -204,7 +209,7 @@ export default function AdbPanel() {
       setConnectIp('');
       refreshDevices();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Connection failed');
+      notify(e instanceof Error ? e.message : 'Connection failed', 'error');
     } finally {
       setConnecting(false);
     }
@@ -244,7 +249,7 @@ export default function AdbPanel() {
       const session = await api.startLogcat(selectedDevice);
       setActiveLogcat(session);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to start logcat');
+      notify(e instanceof Error ? e.message : 'Failed to start logcat', 'error');
     }
   };
 

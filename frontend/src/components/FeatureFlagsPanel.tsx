@@ -4,6 +4,7 @@
  */
 import { useCallback, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface FeatureFlag {
   enabled: boolean;
@@ -27,6 +28,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export default function FeatureFlagsPanel() {
+  const confirmAction = useConfirm();
   const fetcher = useCallback(async () => {
     try { const r = await fetch('/api/v1/system/features'); return r.ok ? r.json() : {}; } catch { return {}; }
   }, []);
@@ -45,7 +47,7 @@ export default function FeatureFlagsPanel() {
   };
 
   const resetDefaults = async () => {
-    if (!confirm('Reset all feature flags to defaults?')) return;
+    if (!await confirmAction({ title: 'Reset Feature Flags', message: 'Reset all feature flags to defaults?', confirmLabel: 'Reset' })) return;
     await fetch('/api/v1/system/features/reset', { method: 'POST' });
     refresh();
   };

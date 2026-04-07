@@ -2,8 +2,10 @@ import { useCallback, useState } from 'react';
 import type { ProxyStatus } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useNotification } from '../hooks/useNotification';
 
 export default function ProxySettings() {
+  const { notify } = useNotification();
   const fetcher = useCallback(() => api.getProxyStatus(), []);
   const { data: status, refresh } = useApi<ProxyStatus>(fetcher, 5000);
   const [toggling, setToggling] = useState(false);
@@ -18,7 +20,7 @@ export default function ProxySettings() {
       }
       refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to toggle proxy');
+      notify(e instanceof Error ? e.message : 'Failed to toggle proxy', 'error');
     } finally {
       setToggling(false);
     }

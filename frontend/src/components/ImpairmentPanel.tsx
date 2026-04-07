@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ImpairmentConfig, InterfaceImpairmentState } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import { useNotification } from '../hooks/useNotification';
 
 const DEFAULT_CONFIG: ImpairmentConfig = {
   delay: { ms: 0, jitter_ms: 0, correlation_pct: 25 },
@@ -56,6 +57,7 @@ function SliderRow({
 }
 
 export default function ImpairmentPanel() {
+  const { notify } = useNotification();
   const fetcher = useCallback(() => api.getImpairments(), []);
   const { data: states, refresh } = useApi<InterfaceImpairmentState[]>(fetcher, 5000);
   const [selectedInterface, setSelectedInterface] = useState('');
@@ -120,7 +122,7 @@ export default function ImpairmentPanel() {
       refresh();
     } catch (e) {
       showFeedback('error');
-      alert(e instanceof Error ? e.message : 'Failed to apply');
+      notify(e instanceof Error ? e.message : 'Failed to apply', 'error');
     } finally {
       setApplying(false);
     }
@@ -137,7 +139,7 @@ export default function ImpairmentPanel() {
       refresh();
     } catch (e) {
       showFeedback('error');
-      alert(e instanceof Error ? e.message : 'Failed to clear');
+      notify(e instanceof Error ? e.message : 'Failed to clear', 'error');
     } finally {
       setApplying(false);
     }
