@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ImpairmentPanel from './ImpairmentPanel';
 import ProfileManager from './ProfileManager';
 import NetworkStatus from './NetworkStatus';
@@ -94,6 +94,50 @@ export default function Dashboard() {
   const [analyzingCaptureId, setAnalyzingCaptureId] = useState<string | null>(null);
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const { isEnabled } = useFeatureFlags();
+  const wsRef = useRef<WebSocket | null>(null);
+  const ignoreNextNavigate = useRef(false);
+
+  // Collaboration WebSocket for navigation mirroring
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/collab/ws?name=`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'navigate' && msg.tab) {
+          // Mirror navigation from another user
+          ignoreNextNavigate.current = true;
+          setTab(msg.tab as Tab);
+        } else if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+        } else if (msg.type === 'tunnel_closed') {
+          // Tunnel stopped — connection will close
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onclose = () => { wsRef.current = null; };
+
+    return () => { ws.close(); wsRef.current = null; };
+  }, []);
+
+  // Send navigation messages when user changes tab
+  const handleTabChange = useCallback((newTab: Tab) => {
+    setTab(newTab);
+    if (newTab !== 'captures') setAnalyzingCaptureId(null);
+    if (newTab !== 'streams') setSelectedStreamId(null);
+
+    // Broadcast to other users (skip if this was a mirrored navigate)
+    if (ignoreNextNavigate.current) {
+      ignoreNextNavigate.current = false;
+      return;
+    }
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'navigate', tab: newTab }));
+    }
+  }, []);
 
   // Filter tabs based on feature flags
   const visibleTabs = TABS.filter(t => {
@@ -136,11 +180,7 @@ export default function Dashboard() {
               <button
                 key={t.id}
                 title={t.desc}
-                onClick={() => {
-                  setTab(t.id);
-                  if (t.id !== 'captures') setAnalyzingCaptureId(null);
-                  if (t.id !== 'streams') setSelectedStreamId(null);
-                }}
+                onClick={() => handleTabChange(t.id)}
                 className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
                   tab === t.id
                     ? 'bg-blue-600 text-white'

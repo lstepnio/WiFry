@@ -119,6 +119,10 @@ async def stop_tunnel() -> dict:
     _tunnel_url = None
     _started_at = None
 
+    # Clean up all collaboration users when tunnel stops
+    from . import collaboration
+    await collaboration.disconnect_all_users()
+
     logger.info("Tunnel stopped")
     return get_status()
 

@@ -40,6 +40,9 @@ _shared_state: dict = {
     "last_action_by": None,
     "last_action_at": None,
 }
+_heartbeat_task: Optional[asyncio.Task] = None
+HEARTBEAT_INTERVAL = 15  # seconds
+INACTIVITY_TIMEOUT = 60  # seconds — remove users inactive longer than this
 
 
 def get_mode() -> str:
@@ -71,8 +74,49 @@ def get_status() -> dict:
     }
 
 
+async def _heartbeat_loop() -> None:
+    """Periodic ping to detect dead connections and remove stale users."""
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        now = datetime.now(timezone.utc)
+        stale = []
+
+        for uid, ws in list(_websockets.items()):
+            user = _connected_users.get(uid)
+            if not user:
+                stale.append(uid)
+                continue
+
+            # Check inactivity
+            try:
+                last = datetime.fromisoformat(user["last_activity"])
+                if (now - last).total_seconds() > INACTIVITY_TIMEOUT:
+                    stale.append(uid)
+                    continue
+            except (ValueError, KeyError):
+                pass
+
+            # Ping to detect dead sockets
+            try:
+                await ws.send_text(json.dumps({"type": "ping"}))
+            except Exception:
+                stale.append(uid)
+
+        for uid in stale:
+            logger.info("Removing stale user: %s", uid)
+            await disconnect_user(uid)
+
+
+def _ensure_heartbeat() -> None:
+    """Start heartbeat task if not running."""
+    global _heartbeat_task
+    if _heartbeat_task is None or _heartbeat_task.done():
+        _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
+
 async def connect_user(ws: WebSocket, name: str = "") -> str:
     """Register a new connected user."""
+    _ensure_heartbeat()
     user_id = uuid.uuid4().hex[:8]
     now = datetime.now(timezone.utc).isoformat()
 
@@ -177,6 +221,10 @@ async def handle_message(user_id: str, data: dict) -> None:
             "y": data.get("y", 0),
         }, exclude=user_id)
 
+    elif msg_type == "pong":
+        # Response to heartbeat ping — just updates last_activity (already done above)
+        pass
+
     elif msg_type == "chat":
         # Simple text chat between users
         await _broadcast({
@@ -186,6 +234,23 @@ async def handle_message(user_id: str, data: dict) -> None:
             "message": data.get("message", ""),
             "timestamp": user["last_activity"],
         })
+
+
+async def disconnect_all_users() -> None:
+    """Disconnect all users. Called when tunnel stops."""
+    for uid in list(_websockets.keys()):
+        try:
+            ws = _websockets.get(uid)
+            if ws:
+                await ws.send_text(json.dumps({
+                    "type": "tunnel_closed",
+                    "message": "Sharing tunnel has been stopped",
+                }))
+                await ws.close()
+        except Exception:
+            pass
+        await disconnect_user(uid)
+    logger.info("All collaboration users disconnected")
 
 
 async def broadcast_state_update(action: str, detail: Optional[dict] = None) -> None:
