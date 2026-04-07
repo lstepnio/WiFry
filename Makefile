@@ -3,7 +3,7 @@
 # ─── Development (local Mac) ─────────────────────────────────────────
 
 dev:
-	@echo "Starting backend (port 8080) and frontend (port 3000)..."
+	@echo "Starting backend (port 8080) and frontend dev server (port 3000)..."
 	@make backend &
 	@make frontend
 
@@ -70,7 +70,7 @@ update-ssh:
 		/tmp/wifry-update/ /opt/wifry/ && \
 		sudo cp -r /tmp/wifry-update/frontend/dist /opt/wifry/frontend/dist && \
 		sudo chown -R wifry:wifry /opt/wifry && \
-		sudo systemctl restart wifry-backend wifry-frontend && \
+		sudo systemctl restart wifry-backend && \
 		rm -rf /tmp/wifry-update"
 	@echo "Update deployed and services restarted."
 
@@ -79,13 +79,13 @@ deploy:
 	sudo bash setup/install.sh
 
 restart-ssh:
-	ssh $(RPI) "sudo systemctl restart wifry-backend wifry-frontend"
+	ssh $(RPI) "sudo systemctl restart wifry-backend hostapd dnsmasq"
 
 logs-ssh:
-	ssh -t $(RPI) "sudo journalctl -u wifry-backend -u wifry-frontend -f"
+	ssh -t $(RPI) "sudo journalctl -u wifry-backend -u hostapd -u dnsmasq -f"
 
 status-ssh:
-	ssh $(RPI) "sudo systemctl status wifry-backend wifry-frontend hostapd dnsmasq --no-pager"
+	ssh $(RPI) "sudo systemctl status wifry-backend hostapd dnsmasq --no-pager"
 
 verify-ssh:
 	ssh $(RPI) "curl -sf http://localhost:8080/api/v1/health && echo ' Backend OK' || echo ' Backend FAIL'"

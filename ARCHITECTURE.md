@@ -2,7 +2,7 @@
 
 ## System Overview
 
-WiFry is a Raspberry Pi-based WiFi hotspot that simulates adverse network conditions for IP video (IPTV/STB) testing. STBs connect to WiFry's WiFi AP, and all their traffic passes through the RPi where it can be impaired, captured, and analyzed.
+WiFry is a Raspberry Pi-based WiFi hotspot that simulates adverse network conditions for IP video (IPTV/STB) testing. STBs connect to WiFry's WiFi AP, and all their traffic passes through the RPi where it can be impaired, captured, and analyzed. In production, a single FastAPI process serves both the REST API and the built React UI on port `8080`.
 
 ```
 ┌─────────────┐      WiFi        ┌──────────────────────────────┐     Ethernet    ┌──────────┐
@@ -33,7 +33,7 @@ WiFry is a Raspberry Pi-based WiFi hotspot that simulates adverse network condit
 | ADB | Android Debug Bridge (network mode) |
 | VPN / Teleport | WireGuard, OpenVPN, IPsec/strongSwan |
 | Backend | Python 3.11+ / FastAPI / uvicorn |
-| Frontend | React 18 + TypeScript + Vite + Tailwind CSS |
+| Frontend | React 19 + TypeScript + Vite + Tailwind CSS |
 | Sharing | Session bundle links via `file.io`; experimental live access via Cloudflare Quick Tunnel |
 
 ## Product Surface
@@ -43,6 +43,17 @@ WiFry intentionally keeps the day-to-day operator workflow narrow:
 - **Supported workflow:** configure connectivity in **Network Config**, create a **Session**, collect artifacts into that session, then generate or share a session bundle.
 - **Experimental / opt-in:** **Live Remote Access** (Cloudflare Quick Tunnel) and **Collaboration Mode**. These are hidden behind feature flags and grouped under System rather than treated as the default sharing path.
 - **Backend-only compatibility surface:** **Scenario APIs** remain available for automation/testing, but they are not part of the supported primary UI workflow.
+
+## Deployment Model
+
+WiFry currently runs in two distinct modes:
+
+| Mode | UI delivery | API delivery | Ports |
+|------|-------------|--------------|-------|
+| Local development | Vite dev server | FastAPI / uvicorn | `3000` for Vite, `8080` for FastAPI |
+| Raspberry Pi / production | Built frontend from `frontend/dist`, served by FastAPI | FastAPI / uvicorn | `8080` |
+
+Important implication: there is no separate `wifry-frontend` runtime service in the current appliance model. If a stale note or old script mentions one, treat `wifry-backend` as the source of truth for the web UI.
 
 ## Runtime State Boundaries
 
@@ -130,14 +141,14 @@ The recommended workflow for IP video testing:
 ```
 1. systemd starts all services
 2. wifry-recovery.service starts on tty2 (Alt+F2 for recovery console)
-3. wifry-backend.service starts uvicorn
+3. wifry-backend.service starts uvicorn on port 8080
 4. Lifespan startup:
    a. Apply fallback IP (169.254.42.1) on eth0 — ALWAYS, can't be disabled
    b. Check for boot profile → apply if found
    c. Otherwise: load saved config or use safe defaults
    d. Apply WiFi AP config (hostapd + dnsmasq)
    e. Apply Ethernet config (DHCP or static)
-5. wifry-frontend.service serves the React build
+5. If `frontend/dist` is present, FastAPI serves the built React app from the same origin as the API
 ```
 
 ## Recovery
@@ -147,6 +158,8 @@ If locked out (misconfigured WiFi/Ethernet):
 1. **Fallback IP** (always works): Connect laptop to RPi Ethernet, navigate to `http://169.254.42.1:8080`
 2. **Recovery console** (HDMI + keyboard): Press Alt+F2 → interactive menu with network reset, service restart, factory reset
 3. **SSH** (if Ethernet works): `ssh pi@<rpi-ip>` → `sudo /opt/wifry/setup/wifry-recovery.sh`
+
+Operationally, the services that matter for box reachability are `wifry-backend`, `hostapd`, and `dnsmasq`.
 
 ## API Structure
 
@@ -178,30 +191,33 @@ All endpoints under `/api/v1/`:
 
 ```
 WiFry/
+├── README.md                        # Human onboarding entrypoint
+├── CONTRIBUTING.md                  # Contributor setup + validation
+├── RUNBOOKS.md                      # Install/update/recovery/security runbooks
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                    # FastAPI app, lifespan, routers
-│   │   ├── config.py                  # Settings (pydantic-settings)
-│   │   ├── routers/                   # API endpoints (15 routers)
-│   │   ├── services/                  # Business logic (20+ services)
-│   │   ├── models/                    # Pydantic models
-│   │   ├── utils/shell.py             # Safe async subprocess wrapper
-│   │   └── mitmproxy_addon/           # HLS/DASH stream interception
-│   ├── profiles/                      # Built-in impairment profiles (12)
-│   └── tests/                         # pytest test suite
+│   │   ├── main.py                  # FastAPI app, lifespan, SPA serving
+│   │   ├── config.py                # Settings (pydantic-settings)
+│   │   ├── routers/                 # API routers
+│   │   ├── services/                # Business logic and hardware integrations
+│   │   ├── models/                  # Pydantic models
+│   │   ├── utils/shell.py           # Safe async subprocess wrapper
+│   │   └── mitmproxy_addon/         # HLS/DASH stream interception
+│   ├── profiles/                    # Built-in impairment profiles
+│   └── tests/                       # pytest suite
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx                    # Root with ErrorBoundary
-│   │   ├── components/                # 25+ React components
-│   │   ├── hooks/                     # useApi, useNotification
-│   │   ├── api/client.ts              # Typed API client
-│   │   └── types/index.ts             # TypeScript interfaces
-│   └── index.html                     # Dark mode forced
+│   │   ├── App.tsx                  # Root app shell
+│   │   ├── components/              # Operator panels and shell
+│   │   ├── hooks/                   # Data and notification hooks
+│   │   ├── api/client.ts            # Typed API client
+│   │   └── types/index.ts           # TypeScript interfaces
+│   └── dist/                        # Production build served by FastAPI
 ├── setup/
-│   ├── install.sh                     # One-shot RPi setup
-│   ├── wifry-recovery.sh             # Physical access recovery
-│   ├── wifry-motd.sh                 # Login banner
-│   ├── *.service                      # systemd units
-│   └── *.template                     # hostapd/dnsmasq configs
-└── ARCHITECTURE.md                    # This file
+│   ├── install.sh                   # One-shot RPi setup
+│   ├── wifry-backend.service        # Production service
+│   ├── wifry-recovery.sh            # Physical access recovery
+│   ├── wifry-recovery.service       # Recovery console launcher
+│   └── *.template                   # hostapd/dnsmasq configs
+└── ARCHITECTURE.md                  # This file
 ```

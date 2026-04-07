@@ -352,7 +352,7 @@ async def get_app_logs(lines: int = 200, level: str = "all"):
             json.dumps({"ts": "2026-04-03T00:10:10Z", "level": "INFO", "logger": "app.services.audit_log", "message": "audit.event", "request_id": "req-demo-2", "event": "audit", "action": "sharing.fileio.upload_bundle", "resource_type": "bundle"}),
         ], "total": 5}
 
-    cmd = ["journalctl", "-u", "wifry-backend", "-u", "wifry-frontend",
+    cmd = ["journalctl", "-u", "wifry-backend",
            "-u", "hostapd", "-u", "dnsmasq",
            "--no-pager", "-n", str(min(lines, 5000))]
     if level == "error":
@@ -375,7 +375,7 @@ async def share_app_logs(lines: int = 500):
         log_content = "WiFry Mock Logs\n" + "Mock log line\n" * 20
     else:
         result = await run(
-            "journalctl", "-u", "wifry-backend", "-u", "wifry-frontend",
+            "journalctl", "-u", "wifry-backend",
             "-u", "hostapd", "-u", "dnsmasq",
             "--no-pager", "-n", str(min(lines, 5000)),
             check=False, timeout=10,

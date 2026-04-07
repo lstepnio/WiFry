@@ -77,7 +77,7 @@ show_status() {
     echo ""
     echo -e "${BOLD}Services:${NC}"
 
-    for SVC in wifry-backend wifry-frontend hostapd dnsmasq; do
+    for SVC in wifry-backend hostapd dnsmasq; do
         if systemctl is-active --quiet "$SVC" 2>/dev/null; then
             echo -e "  ${SVC}: ${GREEN}running${NC}"
         else
@@ -184,7 +184,6 @@ restart_services() {
     systemctl restart hostapd 2>/dev/null || echo "  hostapd: failed"
     systemctl restart dnsmasq 2>/dev/null || echo "  dnsmasq: failed"
     systemctl restart wifry-backend 2>/dev/null || echo "  wifry-backend: failed"
-    systemctl restart wifry-frontend 2>/dev/null || echo "  wifry-frontend: failed"
     echo -e "${GREEN}Services restarted.${NC}"
     echo ""
 }
@@ -237,7 +236,7 @@ set_static_ethernet() {
 show_logs() {
     echo -e "${BOLD}Recent WiFry logs (last 50 lines):${NC}"
     echo ""
-    journalctl -u wifry-backend -u wifry-frontend -u hostapd -u dnsmasq --no-pager -n 50
+    journalctl -u wifry-backend -u hostapd -u dnsmasq --no-pager -n 50
     echo ""
     read -p "Press Enter to continue..."
 }
