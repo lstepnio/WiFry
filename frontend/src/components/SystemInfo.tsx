@@ -116,10 +116,6 @@ export default function SystemInfo() {
           </div>
         )}
 
-        <div>
-          <div className="text-xs text-gray-500 dark:text-gray-400">Platform</div>
-          <div className="text-gray-600 dark:text-gray-400">{info.platform}</div>
-        </div>
       </div>
 
       <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
