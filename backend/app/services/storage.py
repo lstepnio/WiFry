@@ -1,10 +1,10 @@
-"""External storage management.
+"""Shared data-path resolution and external storage management.
 
-Detects and mounts USB storage devices for storing captures, logs,
-HDMI recordings, and segment data instead of the RPi's SD card.
-
-When external storage is enabled, all data paths (captures, logs,
-segments, HDMI frames, recordings) are redirected to the USB mount.
+All services that persist runtime artifacts should resolve their paths
+through this module instead of hardcoding `/var/lib/wifry/...` or ad hoc
+mock-mode directories. That keeps default, mock, and external-storage
+layouts aligned across captures, sessions, reports, ADB artifacts, and
+scenario metadata.
 """
 
 import json
@@ -18,9 +18,73 @@ from ..utils.shell import run
 logger = logging.getLogger(__name__)
 
 MOUNT_BASE = Path("/media/wifry")
-CONFIG_PATH = Path("/var/lib/wifry/storage.json") if not settings.mock_mode else Path("/tmp/wifry-storage.json")
+CONFIG_PATH = settings.data_dir / "storage.json" if not settings.mock_mode else Path("/tmp/wifry-storage.json")
 
 _active_mount: Optional[str] = None
+
+_EXTERNAL_SUBDIRS: Dict[str, str] = {
+    "captures": "captures",
+    "logs": "logs",
+    "segments": "segments",
+    "hdmi": "hdmi",
+    "reports": "reports",
+    "adb_files": "adb-files",
+    "annotations": "annotations",
+    "sessions": "sessions",
+    "scenarios": "scenarios",
+}
+
+_MOCK_PATHS: Dict[str, Path] = {
+    "captures": Path("/tmp/wifry-captures"),
+    "logs": Path("/tmp/wifry-logs"),
+    "segments": Path("/tmp/wifry-segments"),
+    "hdmi": Path("/tmp/wifry-hdmi"),
+    "reports": Path("/tmp/wifry-reports"),
+    "adb_files": Path("/tmp/wifry-adb-files"),
+    "annotations": Path("/tmp/wifry-annotations"),
+    "sessions": Path("/tmp/wifry-sessions"),
+    "scenarios": Path("/tmp/wifry-scenarios"),
+}
+
+
+def _default_paths() -> Dict[str, Path]:
+    return {
+        "captures": settings.captures_dir,
+        "logs": settings.data_dir / "logs",
+        "segments": settings.data_dir / "segments",
+        "hdmi": settings.data_dir / "hdmi-captures",
+        "reports": settings.data_dir / "reports",
+        "adb_files": settings.data_dir / "adb-files",
+        "annotations": settings.data_dir / "annotations",
+        "sessions": settings.data_dir / "sessions",
+        "scenarios": settings.data_dir / "scenarios",
+    }
+
+
+def get_data_path(name: str) -> Path:
+    """Resolve a named runtime data path."""
+    if name not in _EXTERNAL_SUBDIRS:
+        raise ValueError(f"Unknown data path '{name}'")
+
+    if _active_mount:
+        return Path(_active_mount) / _EXTERNAL_SUBDIRS[name]
+
+    if settings.mock_mode:
+        return _MOCK_PATHS[name]
+
+    return _default_paths()[name]
+
+
+def ensure_data_path(name: str) -> Path:
+    """Resolve and create a named runtime data path."""
+    path = get_data_path(name)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_data_paths() -> dict:
+    """Get the current data paths (external, mock, or default)."""
+    return {name: str(get_data_path(name)) for name in _EXTERNAL_SUBDIRS}
 
 
 async def detect_devices() -> List[dict]:
@@ -48,21 +112,17 @@ async def detect_devices() -> List[dict]:
         return []
 
     devices = []
-    for bd in data.get("blockdevices", []):
-        # Look for partitions on USB devices
-        children = bd.get("children", [])
-        if not children and bd.get("type") == "part":
-            children = [bd]
+    for block_device in data.get("blockdevices", []):
+        children = block_device.get("children", [])
+        if not children and block_device.get("type") == "part":
+            children = [block_device]
 
         for part in children:
-            if part.get("type") != "part":
-                continue
-            if not part.get("fstype"):
+            if part.get("type") != "part" or not part.get("fstype"):
                 continue
 
-            device = f"/dev/{part['name']}"
             devices.append({
-                "device": device,
+                "device": f"/dev/{part['name']}",
                 "label": part.get("label", ""),
                 "filesystem": part.get("fstype", ""),
                 "size_human": part.get("size", ""),
@@ -91,11 +151,9 @@ async def mount_device(device: str) -> dict:
     if not result.success:
         return {"status": "error", "message": result.stderr}
 
-    # Create subdirectories
-    for subdir in ["captures", "logs", "segments", "hdmi", "reports", "adb-files", "annotations"]:
+    for subdir in set(_EXTERNAL_SUBDIRS.values()):
         (mount_point / subdir).mkdir(exist_ok=True)
 
-    # Set ownership
     await run("chown", "-R", "wifry:wifry", str(mount_point), sudo=True, check=False)
 
     _active_mount = str(mount_point)
@@ -106,7 +164,7 @@ async def mount_device(device: str) -> dict:
 
 
 async def unmount() -> dict:
-    """Unmount external storage and revert to SD card paths."""
+    """Unmount external storage and revert to default paths."""
     global _active_mount
 
     if settings.mock_mode:
@@ -131,58 +189,34 @@ def get_status() -> dict:
     }
 
 
-def get_data_paths() -> dict:
-    """Get the current data paths (external or default)."""
-    if _active_mount:
-        base = Path(_active_mount)
-        return {
-            "captures": str(base / "captures"),
-            "logs": str(base / "logs"),
-            "segments": str(base / "segments"),
-            "hdmi": str(base / "hdmi"),
-            "reports": str(base / "reports"),
-            "adb_files": str(base / "adb-files"),
-            "annotations": str(base / "annotations"),
-        }
-    else:
-        # Default SD card paths
-        base = "/var/lib/wifry" if not settings.mock_mode else "/tmp/wifry"
-        return {
-            "captures": f"{base}/captures",
-            "logs": f"{base}/logs",
-            "segments": f"{base}/segments",
-            "hdmi": f"{base}/hdmi-captures",
-            "reports": f"{base}/reports",
-            "adb_files": f"{base}/adb-files",
-            "annotations": f"{base}/annotations",
-        }
-
-
 async def get_usage() -> dict:
     """Get storage usage stats."""
-    paths = get_data_paths()
     usage = {}
 
-    for name, path in paths.items():
-        p = Path(path)
-        if p.exists():
-            total = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-            count = sum(1 for f in p.rglob("*") if f.is_file())
+    for name, path_str in get_data_paths().items():
+        path = Path(path_str)
+        if path.exists():
+            total = sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+            count = sum(1 for file in path.rglob("*") if file.is_file())
             usage[name] = {
-                "path": path,
+                "path": path_str,
                 "size_bytes": total,
                 "size_mb": round(total / (1024 * 1024), 2),
                 "file_count": count,
             }
         else:
-            usage[name] = {"path": path, "size_bytes": 0, "size_mb": 0, "file_count": 0}
+            usage[name] = {
+                "path": path_str,
+                "size_bytes": 0,
+                "size_mb": 0,
+                "file_count": 0,
+            }
 
-    # Total
-    total_bytes = sum(u["size_bytes"] for u in usage.values())
+    total_bytes = sum(item["size_bytes"] for item in usage.values())
     usage["_total"] = {
         "size_bytes": total_bytes,
         "size_mb": round(total_bytes / (1024 * 1024), 2),
-        "file_count": sum(u["file_count"] for u in usage.values()),
+        "file_count": sum(item["file_count"] for item in usage.values()),
     }
 
     return usage
@@ -195,15 +229,16 @@ def _save_config(device: str, mount_point: str) -> None:
 
 def _load_config() -> None:
     global _active_mount
-    if CONFIG_PATH.exists():
-        try:
-            data = json.loads(CONFIG_PATH.read_text())
-            mp = data.get("mount_point", "")
-            if mp and Path(mp).exists():
-                _active_mount = mp
-        except (json.JSONDecodeError, OSError):
-            pass
+    if not CONFIG_PATH.exists():
+        return
+
+    try:
+        data = json.loads(CONFIG_PATH.read_text())
+        mount_point = data.get("mount_point", "")
+        if mount_point and Path(mount_point).exists():
+            _active_mount = mount_point
+    except (json.JSONDecodeError, OSError):
+        pass
 
 
-# Load on import
 _load_config()

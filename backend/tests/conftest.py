@@ -13,6 +13,7 @@ import pytest
 # All tmp directories that WiFry services create in mock mode
 WIFRY_TMP_DIRS = [
     "/tmp/wifry-captures",
+    "/tmp/wifry-logs",
     "/tmp/wifry-segments",
     "/tmp/wifry-sessions",
     "/tmp/wifry-adb-files",

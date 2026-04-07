@@ -5,7 +5,6 @@ ADB logcat, packet captures, and screenshots.
 """
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -14,13 +13,14 @@ from typing import Dict, List, Optional
 
 from ..config import settings
 from ..models.impairment import ImpairmentConfig
+from ..models.profile import Profile
 from ..models.scenario import (
     ScenarioDefinition,
     ScenarioRun,
     ScenarioStatus,
     ScenarioStepResult,
 )
-from . import adb_manager, capture, tc_manager
+from . import adb_manager, capture, storage, tc_manager
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,12 @@ _scenarios: Dict[str, ScenarioDefinition] = {}
 _runs: Dict[str, ScenarioRun] = {}
 _run_tasks: Dict[str, asyncio.Task] = {}
 
-SCENARIOS_DIR = Path("/var/lib/wifry/scenarios") if not settings.mock_mode else Path("/tmp/wifry-scenarios")
+SCENARIOS_DIR = storage.get_data_path("scenarios")
 
 
 def _ensure_dir() -> Path:
-    SCENARIOS_DIR.mkdir(parents=True, exist_ok=True)
+    global SCENARIOS_DIR
+    SCENARIOS_DIR = storage.ensure_data_path("scenarios")
     return SCENARIOS_DIR
 
 
@@ -169,7 +170,6 @@ async def _execute_scenario(run_id: str, defn: ScenarioDefinition) -> None:
 
                 # Apply impairment
                 if step.profile:
-                    from .._profile_helper import load_and_apply_profile
                     await _apply_profile(defn.interface, step.profile)
                     step_result.profile_applied = step.profile
                 elif step.impairment:
@@ -237,10 +237,18 @@ async def _execute_scenario(run_id: str, defn: ScenarioDefinition) -> None:
 
 
 async def _apply_profile(interface: str, profile_name: str) -> None:
-    """Load and apply a named profile."""
-    from ..routers.profiles import _load_profile
+    """Load and apply a named scenario profile."""
+    profile = _load_profile(profile_name)
+    await tc_manager.apply_impairment(interface, profile.config)
+
+
+def _load_profile(profile_name: str) -> Profile:
+    """Load a saved profile without routing through HTTP-layer helpers."""
+    path = settings.profiles_dir / f"{profile_name}.json"
+    if not path.exists():
+        raise ValueError(f"Profile '{profile_name}' not found")
+
     try:
-        profile = _load_profile(profile_name)
-        await tc_manager.apply_impairment(interface, profile.config)
-    except Exception as e:
-        logger.warning("Failed to apply profile %s: %s", profile_name, e)
+        return Profile.model_validate_json(path.read_text())
+    except Exception as exc:
+        raise ValueError(f"Profile '{profile_name}' is invalid") from exc

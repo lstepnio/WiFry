@@ -9,16 +9,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from ..config import settings
 from ..models.scenario import ScenarioRun
+from . import storage
 
 logger = logging.getLogger(__name__)
 
-REPORTS_DIR = Path("/var/lib/wifry/reports") if not settings.mock_mode else Path("/tmp/wifry-reports")
+REPORTS_DIR = storage.get_data_path("reports")
 
 
 def _ensure_dir() -> Path:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    global REPORTS_DIR
+    REPORTS_DIR = storage.ensure_data_path("reports")
     return REPORTS_DIR
 
 

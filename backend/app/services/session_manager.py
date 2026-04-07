@@ -6,7 +6,6 @@ generated during a testing activity.
 """
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -24,10 +23,9 @@ from ..models.session import (
     SessionSummary,
     TestSession,
 )
+from . import storage
 
 logger = logging.getLogger(__name__)
-
-SESSIONS_DIR = Path("/var/lib/wifry/sessions") if not settings.mock_mode else Path("/tmp/wifry-sessions")
 
 _sessions: Dict[str, TestSession] = {}
 _artifacts: Dict[str, Artifact] = {}
@@ -38,8 +36,7 @@ _lock = asyncio.Lock()
 
 
 def _ensure_dir() -> Path:
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    return SESSIONS_DIR
+    return storage.ensure_data_path("sessions")
 
 
 def _save_session(session: TestSession) -> None:
