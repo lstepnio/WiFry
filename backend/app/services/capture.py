@@ -117,10 +117,56 @@ async def start_capture(req: StartCaptureRequest) -> CaptureInfo:
 
 
 async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) -> None:
-    """Wait for tshark to finish and update capture metadata."""
+    """Monitor tshark: update live packet count, then finalize on exit."""
     try:
-        stdout, stderr = await proc.communicate()
+        pcap = None
+        info = _captures.get(capture_id)
+        if info:
+            pcap = Path(info.pcap_path)
 
+        # Poll file size and parse stderr for live packet count while running
+        stderr_lines: list[str] = []
+
+        async def _read_stderr():
+            """Read stderr in background to prevent buffer deadlock."""
+            if proc.stderr:
+                while True:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    stderr_lines.append(line.decode("utf-8", errors="replace").strip())
+
+        async def _drain_stdout():
+            """Drain stdout to prevent buffer deadlock."""
+            if proc.stdout:
+                while True:
+                    chunk = await proc.stdout.read(4096)
+                    if not chunk:
+                        break
+
+        stderr_task = asyncio.create_task(_read_stderr())
+        stdout_task = asyncio.create_task(_drain_stdout())
+
+        # Poll pcap file size for live updates until process exits
+        while proc.returncode is None:
+            await asyncio.sleep(1)
+            if pcap and pcap.exists() and info:
+                try:
+                    info.file_size_bytes = pcap.stat().st_size
+                    # Parse tshark stderr for packet count
+                    # tshark outputs: "N " or "N packets captured" on stderr
+                    for line in reversed(stderr_lines):
+                        parts = line.strip().split()
+                        if parts and parts[0].isdigit():
+                            info.packet_count = int(parts[0])
+                            break
+                except (OSError, ValueError):
+                    pass
+
+        await stderr_task
+        await stdout_task
+
+        # Process finished — finalize
         info = _captures.get(capture_id)
         if not info:
             return
@@ -129,13 +175,13 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
             info.status = CaptureStatus.COMPLETED if info.status != CaptureStatus.STOPPED else info.status
         else:
             info.status = CaptureStatus.ERROR
-            info.error = stderr.decode().strip()[:500]
+            stderr_text = "\n".join(stderr_lines)
+            info.error = stderr_text[:500]
 
         info.stopped_at = datetime.now(timezone.utc).isoformat()
 
         # Fix ownership — sudo tshark creates files as root
-        pcap = Path(info.pcap_path)
-        if pcap.exists():
+        if pcap and pcap.exists():
             await run("chmod", "644", str(pcap), sudo=True, check=False)
             await run("chown", "wifry:wifry", str(pcap), sudo=True, check=False)
             info.file_size_bytes = pcap.stat().st_size
