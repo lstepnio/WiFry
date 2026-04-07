@@ -193,8 +193,17 @@ async def add_artifact(
     now = datetime.now(timezone.utc).isoformat()
 
     size = 0
-    if file_path and Path(file_path).exists():
-        size = Path(file_path).stat().st_size
+    if file_path:
+        try:
+            p = Path(file_path)
+            if p.exists():
+                size = p.stat().st_size
+        except (OSError, PermissionError):
+            pass
+    # Count inline data size if no file
+    if size == 0 and data:
+        import json as _json
+        size = len(_json.dumps(data).encode())
 
     artifact = Artifact(
         id=artifact_id,
