@@ -158,11 +158,10 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
 
             if pcap and info:
                 try:
-                    # Use sudo stat since tshark creates files as root
-                    result = await run("stat", "-c", "%s", str(pcap), sudo=True, check=False)
-                    if result.success and result.stdout.strip().isdigit():
-                        info.file_size_bytes = int(result.stdout.strip())
-                except Exception:
+                    # stat works on root-owned files in 1777 dirs without sudo
+                    if pcap.exists():
+                        info.file_size_bytes = pcap.stat().st_size
+                except (OSError, PermissionError):
                     pass
 
         await stderr_task
