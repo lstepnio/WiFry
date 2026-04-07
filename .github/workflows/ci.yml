@@ -46,12 +46,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        env:
-          WIFRY_MOCK_MODE: "true"
-        run: |
-          cd backend
-          source .venv/bin/activate
-          python -m pytest tests/ --ignore=tests/hw -q --tb=short
+        run: make ci-backend
 
   test-backend-release-risk:
     name: Backend Release-Risk
@@ -74,20 +69,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run release-risk tests
-        env:
-          WIFRY_MOCK_MODE: "true"
-        run: |
-          cd backend
-          source .venv/bin/activate
-          python -m pytest \
-            tests/test_runtime_state_boundaries.py \
-            tests/test_storage_scheduler.py \
-            tests/test_sessions.py \
-            tests/test_captures.py \
-            tests/test_sharing.py \
-            tests/test_system.py \
-            tests/test_system_extended.py \
-            -q
+        run: make ci-backend-release-risk
 
   test-frontend:
     name: Frontend Critical Flows
@@ -107,25 +89,17 @@ jobs:
           cd frontend
           npm ci
 
-      - name: Lint
-        run: |
-          cd frontend
-          npm run lint
+      - name: Run frontend quality gate
+        run: make ci-frontend
 
-      - name: Run frontend tests
-        run: |
-          cd frontend
-          npm test
+  test-deploy-smoke:
+    name: Deploy Script Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Type check
-        run: |
-          cd frontend
-          npx tsc --noEmit
-
-      - name: Build
-        run: |
-          cd frontend
-          npm run build
+      - name: Validate deploy and release paths
+        run: make ci-deploy-smoke
 
   test-hardware-smoke:
     name: Hardware Smoke

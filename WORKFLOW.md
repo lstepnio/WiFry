@@ -141,18 +141,8 @@ cd frontend && npx tsc --noEmit && npm run build
 git checkout main && git pull
 git status  # should be clean
 
-# 2. Run the same fast-feedback gates that PRs use
-cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q
-cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest \
-  tests/test_runtime_state_boundaries.py \
-  tests/test_storage_scheduler.py \
-  tests/test_sessions.py \
-  tests/test_captures.py \
-  tests/test_sharing.py \
-  tests/test_system.py \
-  tests/test_system_extended.py \
-  -q
-cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build
+# 2. Run the same release gates that automation expects
+make ci-release
 
 # 3. Run hardware smoke verification on the real box (manual release gate)
 cd backend && source .venv/bin/activate && python -m pytest tests/hw -m "hw_readiness or hw_smoke" -v --tb=short
@@ -167,16 +157,18 @@ git log --oneline v0.1.8..HEAD  # adjust previous tag
 git tag -a v0.1.9 -m "v0.1.9: brief description"
 git push origin v0.1.9
 
-# 7. Watch the CI build
+# 7. Watch the release workflow
 gh run watch $(gh run list --workflow=build-image.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 
-# 8. Update release notes
+# 8. Update release notes if needed
 gh release edit v0.1.9 --notes "## WiFry v0.1.9
 ### Changes
 - ...
 ### Flash Instructions
 ..."
 ```
+
+The tag workflow now reruns `make ci-release` and image-artifact integrity checks before publishing the image and generated GitHub release.
 
 **Never ask an agent to tag a release.** This is a human-only action.
 
@@ -257,10 +249,12 @@ Fallback if mDNS doesn't resolve: use `169.254.42.1` (direct Ethernet).
 | Action | Command |
 |--------|---------|
 | Check open PRs | `gh pr list` |
-| Run backend fast feedback | `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q` |
-| Run backend release-risk tests | `cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/test_runtime_state_boundaries.py tests/test_storage_scheduler.py tests/test_sessions.py tests/test_captures.py tests/test_sharing.py tests/test_system.py tests/test_system_extended.py -q` |
+| Run backend fast feedback | `make ci-backend` |
+| Run backend release-risk tests | `make ci-backend-release-risk` |
 | Run hardware smoke verification | `cd backend && source .venv/bin/activate && python -m pytest tests/hw -m "hw_readiness or hw_smoke" -v --tb=short` |
-| Build and test frontend | `cd frontend && npm run lint && npm test && npx tsc --noEmit && npm run build` |
+| Build and test frontend | `make ci-frontend` |
+| Run deploy/release smoke validation | `make ci-deploy-smoke` |
+| Run the full non-hardware release gate | `make ci-release` |
 | Deploy file to RPi | `scp <file> wifry:/tmp/ && ssh wifry "sudo cp /tmp/<file> /opt/wifry/..."` |
 | Restart RPi backend | `ssh wifry "sudo systemctl restart wifry-backend"` |
 | Check RPi logs | `ssh wifry "sudo journalctl -u wifry-backend -f --no-pager"` |
