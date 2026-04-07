@@ -240,7 +240,11 @@ export default function CaptureManager({
                 <span className="font-mono text-xs text-gray-500">{c.interface}</span>
               </div>
               <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                {c.packet_count} packets &middot; {formatBytes(c.file_size_bytes)}
+                {c.status === 'running' ? (
+                  <>{formatBytes(c.file_size_bytes)} captured</>
+                ) : (
+                  <>{c.packet_count} packets &middot; {formatBytes(c.file_size_bytes)}</>
+                )}
                 {c.bpf_expression && (
                   <> &middot; <span className="font-mono">{c.bpf_expression}</span></>
                 )}
@@ -256,7 +260,7 @@ export default function CaptureManager({
                   Stop
                 </button>
               )}
-              {c.status !== 'running' && c.packet_count > 0 && (
+              {c.status !== 'running' && c.file_size_bytes > 0 && (
                 <a
                   href={`/api/v1/captures/${c.id}/download`}
                   download={`${c.name || c.id}.pcap`}

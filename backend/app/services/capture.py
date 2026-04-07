@@ -148,19 +148,19 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
         stdout_task = asyncio.create_task(_drain_stdout())
 
         # Poll pcap file size for live updates until process exits
-        while proc.returncode is None:
-            await asyncio.sleep(1)
+        while True:
+            # Check if process has exited
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+                break  # Process exited
+            except asyncio.TimeoutError:
+                pass  # Still running — update live stats
+
             if pcap and pcap.exists() and info:
                 try:
-                    info.file_size_bytes = pcap.stat().st_size
-                    # Parse tshark stderr for packet count
-                    # tshark outputs: "N " or "N packets captured" on stderr
-                    for line in reversed(stderr_lines):
-                        parts = line.strip().split()
-                        if parts and parts[0].isdigit():
-                            info.packet_count = int(parts[0])
-                            break
-                except (OSError, ValueError):
+                    size = pcap.stat().st_size
+                    info.file_size_bytes = size
+                except OSError:
                     pass
 
         await stderr_task
