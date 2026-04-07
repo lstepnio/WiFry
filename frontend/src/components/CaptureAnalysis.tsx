@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AnalysisResult } from '../types';
+import type { AnalysisResult, SystemSettings } from '../types';
 import * as api from '../api/client';
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -26,6 +26,13 @@ export default function CaptureAnalysis({
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch('/api/v1/system/settings').then(r => r.json()).then((s: SystemSettings) => {
+      setAiConfigured(s.anthropic_api_key_set || s.openai_api_key_set);
+    }).catch(() => setAiConfigured(false));
+  }, []);
 
   const runAnalysis = useCallback(async () => {
     setLoading(true);
@@ -71,8 +78,9 @@ export default function CaptureAnalysis({
         </div>
         <button
           onClick={runAnalysis}
-          disabled={loading}
+          disabled={loading || aiConfigured === false}
           className="rounded-lg bg-purple-600 px-5 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+          title={aiConfigured === false ? 'Configure an AI API key in System > App Settings' : ''}
         >
           {loading ? 'Analyzing...' : result ? 'Re-analyze' : 'Run Analysis'}
         </button>
@@ -167,7 +175,19 @@ export default function CaptureAnalysis({
         </>
       )}
 
-      {!result && !loading && !error && (
+      {!result && !loading && !error && aiConfigured === false && (
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-6 text-center">
+          <p className="mb-2 text-lg font-medium text-yellow-400">AI Analysis Not Configured</p>
+          <p className="mb-4 text-sm text-gray-400">
+            To analyze packet captures with AI, configure an API key in settings.
+          </p>
+          <p className="text-xs text-gray-500">
+            Go to <span className="font-medium text-white">System</span> &rarr; <span className="font-medium text-white">App Settings</span> and enter your Anthropic or OpenAI API key.
+          </p>
+        </div>
+      )}
+
+      {!result && !loading && !error && aiConfigured !== false && (
         <div className="py-12 text-center text-gray-500">
           <p className="mb-2 text-lg">No analysis yet</p>
           <p className="text-sm">Click "Run Analysis" to analyze this capture with AI</p>

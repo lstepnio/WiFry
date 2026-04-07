@@ -89,8 +89,18 @@ async def analyze_capture(
     provider = request.provider or settings.ai_provider
     prompt = _build_analysis_prompt(stats, request)
 
-    if settings.mock_mode or (not settings.anthropic_api_key and not settings.openai_api_key):
+    if settings.mock_mode:
         result = _mock_analysis(capture_id, provider)
+    elif not settings.anthropic_api_key and not settings.openai_api_key:
+        return AnalysisResult(
+            capture_id=capture_id,
+            provider="none",
+            model="none",
+            summary="AI analysis requires an API key. Go to System > App Settings to configure your Anthropic or OpenAI API key.",
+            issues=[],
+            statistics={},
+            analyzed_at=datetime.now(timezone.utc).isoformat(),
+        )
     elif provider == "anthropic":
         result = await _analyze_with_anthropic(capture_id, prompt)
     elif provider == "openai":
