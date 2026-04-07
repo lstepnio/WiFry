@@ -39,8 +39,8 @@ DEFAULTS: Dict[str, dict] = {
     # Features with software deps satisfied by install.sh — enabled
     "dns_simulation": {"enabled": True, "label": "DNS Simulation", "description": "CoreDNS-based DNS impairments, NXDOMAIN injection, failover testing.", "category": "advanced",
         "disabled_reason": "Requires CoreDNS binary. Installed by install.sh. Check System > Dependencies to verify."},
-    "streams": {"enabled": True, "label": "Stream Monitoring", "description": "HLS/DASH stream analysis via mitmproxy transparent proxy.", "category": "advanced",
-        "disabled_reason": "Requires mitmproxy (installed by install.sh) AND the mitmproxy CA certificate installed on the STB. Without the CA cert, HTTPS streams can't be inspected."},
+    "streams": {"enabled": False, "label": "Stream Monitoring", "description": "HLS/DASH stream analysis via mitmproxy transparent proxy.", "category": "advanced",
+        "disabled_reason": "Requires mitmproxy AND the mitmproxy CA certificate installed on the STB. Enable when ready to intercept HTTPS streams."},
     "teleport": {"enabled": False, "label": "Teleport VPN", "description": "Geo-shift STB traffic through remote networks via VPN.", "category": "advanced",
         "disabled_reason": "Requires a VPN config file from your network/secops team. Enable when ready to create a Teleport profile."},
     "speed_test_ookla": {"enabled": True, "label": "Ookla Speedtest", "description": "Official Ookla Speedtest CLI for real internet speed measurement.", "category": "tools",
