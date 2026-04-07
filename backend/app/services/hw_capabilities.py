@@ -60,7 +60,7 @@ class WifiCapabilities:
         return {
             "channel_interference": {
                 "supported": self.rts_threshold,
-                "reason": "" if self.rts_threshold else "WiFi driver does not support RTS threshold control",
+                "reason": "" if self.rts_threshold else "WiFi driver does not support RTS threshold control (beacon interval may work but is unverifiable on this chipset)",
             },
             "tx_power": {
                 "supported": self.tx_power_control,
@@ -202,13 +202,13 @@ async def detect_capabilities(interface: str = "") -> WifiCapabilities:
         await run("iw", "dev", iface, "set", "txpower", "auto",
                   sudo=True, check=False)
 
-    # RTS threshold (most Broadcom drivers don't support this)
-    test = await run("iw", "phy", caps.phy, "set", "rts", "500",
-                     sudo=True, check=False)
-    caps.rts_threshold = test.success
-    if test.success:
-        await run("iw", "phy", caps.phy, "set", "rts", "off",
-                  sudo=True, check=False)
+    # RTS threshold — set then verify with "set rts off"
+    # Broadcom accepts "set rts 500" but fails "set rts off" (error -52)
+    await run("iw", "phy", caps.phy, "set", "rts", "500",
+              sudo=True, check=False)
+    revert = await run("iw", "phy", caps.phy, "set", "rts", "off",
+                       sudo=True, check=False)
+    caps.rts_threshold = revert.success  # If can't revert, driver doesn't really support it
 
     # Bitrate control
     test = await run("iw", "dev", iface, "set", "bitrates", "legacy-2.4", "6", "12", "24",
