@@ -28,7 +28,7 @@ ETH_IP=$(ip -4 addr show eth0 2>/dev/null | grep "inet " | grep -v "fallback" | 
 echo -e "  Ethernet: ${ETH_IP:-(no IP)}"
 echo -e "  Fallback: ${GREEN}169.254.42.1${NC} (always reachable)"
 echo ""
-echo -e "  Web UI:   ${CYAN}http://${AP_IP:-192.168.4.1}:3000${NC} (WiFi)"
+echo -e "  Web UI:   ${CYAN}http://${AP_IP:-192.168.4.1}:8080${NC} (WiFi)"
 [[ -n "$ETH_IP" ]] && echo -e "            ${CYAN}http://${ETH_IP}:8080${NC} (Ethernet)"
 echo -e "            ${CYAN}http://169.254.42.1:8080${NC} (Fallback)"
 echo ""

@@ -224,7 +224,7 @@ cp "$INSTALL_DIR/setup/wifry-recovery.service" "$MOUNT_DIR/etc/systemd/system/"
 WANTS="$MOUNT_DIR/etc/systemd/system/multi-user.target.wants"
 mkdir -p "$WANTS"
 ln -sf /etc/systemd/system/wifry-backend.service "$WANTS/wifry-backend.service"
-ln -sf /etc/systemd/system/wifry-frontend.service "$WANTS/wifry-frontend.service"
+# wifry-frontend (port 3000) is no longer used — FastAPI serves frontend on 8080
 ln -sf /etc/systemd/system/wifry-recovery.service "$WANTS/wifry-recovery.service"
 
 # Unmask and enable hostapd

@@ -36,7 +36,7 @@ The fastest way. Download a pre-built image with WiFry fully installed.
 | WiFi Password | `wifry1234` |
 | SSH user | `pi` |
 | SSH password | `wifry` |
-| Web UI (WiFi) | http://192.168.4.1:3000 |
+| Web UI (WiFi) | http://192.168.4.1:8080 |
 | Web UI (Ethernet) | http://\<rpi-ip\>:8080 |
 | Fallback IP | http://169.254.42.1:8080 |
 
@@ -174,7 +174,7 @@ make verify-ssh RPI=pi@<rpi-ip>
 ### Via WiFi (STBs connect here)
 - **SSID**: `WiFry`
 - **Password**: `wifry1234`
-- **Web UI**: http://192.168.4.1:3000
+- **Web UI**: http://192.168.4.1:8080
 
 ### Via Ethernet (from your laptop)
 - **Web UI**: http://\<rpi-ip\>:8080

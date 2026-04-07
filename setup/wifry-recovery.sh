@@ -93,7 +93,7 @@ show_status() {
         echo -e "  ${CYAN}http://${IP_ONLY}:8080${NC}  (ethernet)"
     fi
     AP_IP=${AP_IP:-192.168.4.1}
-    echo -e "  ${CYAN}http://${AP_IP}:3000${NC}   (WiFi — connect to SSID above)"
+    echo -e "  ${CYAN}http://${AP_IP}:8080${NC}   (WiFi — connect to SSID above)"
     echo ""
 }
 

@@ -80,7 +80,7 @@ jobs:
             3. Insert SD card into RPi 4B+ or 5, **connect Ethernet**, boot
             4. Wait ~5 minutes for first-boot setup (installs packages)
             5. Connect to WiFi SSID `WiFry` (password: `wifry1234`)
-            6. Open http://192.168.4.1:3000
+            6. Open http://192.168.4.1:8080
 
             ### Default Credentials
             - **WiFi**: SSID `WiFry`, password `wifry1234`
