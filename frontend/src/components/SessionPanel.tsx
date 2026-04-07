@@ -209,18 +209,44 @@ export default function SessionPanel() {
               : 'Session bundle sharing is disabled right now. You can still generate a local bundle from this session.'}
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
+          {/* Recording state indicator */}
+          {detail.status === 'active' && (
+            <div className={`mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+              activeInfo?.active_session_id === detail.id
+                ? 'border border-green-700 bg-green-950/30 text-green-300'
+                : 'border border-gray-700 bg-gray-800/50 text-gray-400'
+            }`}>
+              {activeInfo?.active_session_id === detail.id ? (
+                <>
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
+                  Recording — captures, impairments, and tests are being linked to this session
+                </>
+              ) : (
+                <>
+                  <span className="inline-block h-2 w-2 rounded-full bg-gray-500" />
+                  Paused — artifacts are not being linked. Resume to continue recording.
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {detail.status === 'active' && activeInfo?.active_session_id === detail.id && (
+              <button onClick={async () => {
+                await fetch('/api/v1/sessions/deactivate', { method: 'POST' });
+                refreshActive();
+              }} className="rounded border border-yellow-500 px-3 py-1.5 text-xs font-medium text-yellow-500 hover:bg-yellow-950">
+                Pause Recording
+              </button>
+            )}
+            {detail.status === 'active' && activeInfo?.active_session_id !== detail.id && (
+              <button onClick={() => { activateSession(detail.id); }}
+                className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700">
+                Resume Recording
+              </button>
+            )}
             {detail.status === 'active' && (
-              <>
-                <button onClick={() => completeSession(detail.id)} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Complete Session</button>
-                <button onClick={async () => {
-                  await fetch('/api/v1/sessions/deactivate', { method: 'POST' });
-                  refreshActive();
-                }} className="rounded border border-yellow-500 px-3 py-1.5 text-xs font-medium text-yellow-500 hover:bg-yellow-950"
-                  title="Stop auto-linking artifacts without completing the session">
-                  Pause Recording
-                </button>
-              </>
+              <button onClick={() => completeSession(detail.id)} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Complete Session</button>
             )}
             <button onClick={() => generateBundle(detail.id)} className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700">Generate Bundle</button>
             {bundleSharingEnabled && (
@@ -354,9 +380,14 @@ export default function SessionPanel() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-500">{s.artifact_count} artifacts</span>
+                  {s.status === 'active' && activeInfo?.active_session_id === s.id && (
+                    <span className="flex items-center gap-1 text-xs text-green-400">
+                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                      Recording
+                    </span>
+                  )}
                   {s.status === 'active' && activeInfo?.active_session_id !== s.id && (
-                    <button onClick={e => { e.stopPropagation(); activateSession(s.id); }}
-                      className="rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700">Activate</button>
+                    <span className="text-xs text-gray-500">Paused</span>
                   )}
                 </div>
               </div>
