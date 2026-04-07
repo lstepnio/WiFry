@@ -34,9 +34,9 @@ import VideoProbe from './VideoProbe';
  * 6. System       — Settings, sharing, tools (sub-tabs)
  */
 
-type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'system';
+type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'sharing' | 'system';
 type ImpairmentSubTab = 'profiles' | 'network' | 'wifi' | 'dns' | 'teleport';
-type SystemSubTab = 'overview' | 'network' | 'tools' | 'sharing' | 'settings';
+type SystemSubTab = 'overview' | 'network' | 'tools' | 'settings';
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: 'sessions', label: 'Sessions', desc: 'Create and manage test sessions' },
@@ -44,7 +44,8 @@ const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: 'adb', label: 'ADB', desc: 'Android device control' },
   { id: 'captures', label: 'Captures', desc: 'Packet capture + AI analysis' },
   { id: 'streams', label: 'Streams', desc: 'HLS/DASH stream monitoring' },
-  { id: 'system', label: 'System', desc: 'Settings, sharing, and tools' },
+  { id: 'sharing', label: 'Sharing', desc: 'Tunnel sharing, file uploads, collaboration' },
+  { id: 'system', label: 'System', desc: 'Settings and tools' },
 ];
 
 const IMP_SUBTABS: { id: ImpairmentSubTab; label: string }[] = [
@@ -59,7 +60,6 @@ const SYS_SUBTABS: { id: SystemSubTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'network', label: 'Network Config' },
   { id: 'tools', label: 'Tools' },
-  { id: 'sharing', label: 'Sharing' },
   { id: 'settings', label: 'App Settings' },
 ];
 
@@ -87,15 +87,14 @@ function SubTabNav<T extends string>({ tabs, active, onChange }: {
   );
 }
 
-export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObject<WebSocket | null> }) {
+export default function Dashboard() {
   const [tab, setTab] = useState<Tab>('sessions');
   const [impSubTab, setImpSubTab] = useState<ImpairmentSubTab>('profiles');
   const [sysSubTab, setSysSubTab] = useState<SystemSubTab>('overview');
   const [analyzingCaptureId, setAnalyzingCaptureId] = useState<string | null>(null);
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const { isEnabled } = useFeatureFlags();
-  const localWsRef = useRef<WebSocket | null>(null);
-  const wsRef = collabWsRef ?? localWsRef;
+  const wsRef = useRef<WebSocket | null>(null);
   const ignoreNextNavigate = useRef(false);
 
   // Collaboration WebSocket for navigation mirroring (auto-reconnect)
@@ -107,7 +106,7 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
       if (!alive) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/collab/ws?name=`);
-      if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = ws;
+      wsRef.current = ws;
 
       ws.onmessage = (event) => {
         try {
@@ -126,7 +125,7 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
       };
 
       ws.onclose = () => {
-        if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = null;
+        wsRef.current = null;
         if (alive) {
           reconnectTimer = setTimeout(connect, 3000);
         }
@@ -141,7 +140,7 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
       alive = false;
       clearTimeout(reconnectTimer);
       if (wsRef.current) wsRef.current.close();
-      if ('current' in wsRef) (wsRef as React.MutableRefObject<WebSocket | null>).current = null;
+      wsRef.current = null;
     };
   }, []);
 
@@ -190,10 +189,7 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
   });
 
   // Filter system sub-tabs
-  const visibleSysSubTabs = SYS_SUBTABS.filter(t => {
-    if (t.id === 'sharing' && !isEnabled('sharing_tunnel') && !isEnabled('sharing_fileio')) return false;
-    return true;
-  });
+  const visibleSysSubTabs = SYS_SUBTABS;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -282,6 +278,9 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
           )
         )}
 
+        {/* Sharing */}
+        {tab === 'sharing' && <SharePanel />}
+
         {/* System — sub-tabbed, filtered by feature flags */}
         {tab === 'system' && (
           <div>
@@ -300,7 +299,6 @@ export default function Dashboard({ collabWsRef }: { collabWsRef?: React.RefObje
                 <SpeedTest />
               </div>
             )}
-            {sysSubTab === 'sharing' && <SharePanel />}
             {sysSubTab === 'settings' && (
               <div className="space-y-6">
                 <SettingsPanel />

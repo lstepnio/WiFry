@@ -1,20 +1,13 @@
 /**
- * Collaboration overlay — shows connected users, mode indicator,
- * and chat for shadow/co-pilot sessions.
+ * Collaboration overlay — shows connected users and mode indicator.
  */
 import { useEffect, useRef, useState } from 'react';
 
 interface User {
   id: string;
   name: string;
+  ip: string;
   connected_at: string;
-  is_local: boolean;
-}
-
-interface ChatMsg {
-  user_name: string;
-  message: string;
-  timestamp: string;
 }
 
 interface CollabStatus {
@@ -25,19 +18,15 @@ interface CollabStatus {
 
 const MODE_LABELS: Record<string, { label: string; color: string; desc: string }> = {
   'co-pilot': { label: 'Co-Pilot', color: 'bg-green-600', desc: 'Anyone can drive' },
-  'spectate': { label: 'Spectate', color: 'bg-blue-600', desc: 'View only for remote users' },
   'download': { label: 'Download', color: 'bg-gray-600', desc: 'File access only' },
 };
 
-export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSocket | null> }) {
+export default function CollabOverlay() {
   const [status, setStatus] = useState<CollabStatus | null>(null);
-  const [chat] = useState<ChatMsg[]>([]);
-  const [chatInput, setChatInput] = useState('');
   const [showPanel, setShowPanel] = useState(false);
   const [lastAction] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Poll status (REST only — no extra WebSocket connection)
   useEffect(() => {
     const load = async () => {
       try {
@@ -49,13 +38,6 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
     pollRef.current = setInterval(load, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
-
-  const sendChat = () => {
-    const ws = wsRef?.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !chatInput.trim()) return;
-    ws.send(JSON.stringify({ type: 'chat', message: chatInput }));
-    setChatInput('');
-  };
 
   const setMode = async (mode: string) => {
     await fetch('/api/v1/collab/mode', {
@@ -69,12 +51,11 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
   const mode = status?.mode ?? 'co-pilot';
   const modeInfo = MODE_LABELS[mode] || MODE_LABELS['co-pilot'];
 
-  // Show overlay when more than 1 user is connected (another tab/browser)
   if (userCount <= 1 && !showPanel) return null;
 
   return (
     <>
-      {/* Floating user count badge */}
+      {/* Floating badge */}
       <button
         onClick={() => setShowPanel(!showPanel)}
         className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full bg-gray-800 px-3 py-2 shadow-lg hover:bg-gray-700"
@@ -90,10 +71,9 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
         <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold text-white ${modeInfo.color}`}>{modeInfo.label}</span>
       </button>
 
-      {/* Expanded panel */}
+      {/* Panel */}
       {showPanel && (
-        <div className="fixed bottom-14 left-4 z-50 w-80 overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
-          {/* Header */}
+        <div className="fixed bottom-14 left-4 z-50 w-72 overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
           <div className="flex items-center justify-between bg-gray-800 px-4 py-2">
             <span className="text-sm font-medium text-gray-200">Collaboration</span>
             <button onClick={() => setShowPanel(false)} className="text-gray-400 hover:text-white">&#x2715;</button>
@@ -101,7 +81,7 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
 
           {/* Mode selector */}
           <div className="border-b border-gray-700 px-4 py-2">
-            <div className="mb-1 text-[10px] text-gray-500">Sharing Mode</div>
+            <div className="mb-1 text-[10px] text-gray-500">Mode</div>
             <div className="flex gap-1">
               {Object.entries(MODE_LABELS).map(([key, info]) => (
                 <button
@@ -117,14 +97,13 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
           </div>
 
           {/* Connected users */}
-          <div className="border-b border-gray-700 px-4 py-2">
+          <div className="px-4 py-2">
             <div className="mb-1 text-[10px] text-gray-500">Connected ({userCount})</div>
             <div className="space-y-1">
               {(status?.connected_users ?? []).map(u => (
                 <div key={u.id} className="flex items-center gap-2 text-xs">
                   <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
                   <span className="text-gray-300">{u.name}</span>
-                  {u.is_local && <span className="text-[9px] text-gray-600">(local)</span>}
                 </div>
               ))}
             </div>
@@ -132,40 +111,10 @@ export default function CollabOverlay({ wsRef }: { wsRef?: React.RefObject<WebSo
 
           {/* Last action */}
           {lastAction && (
-            <div className="border-b border-gray-700 px-4 py-2 text-[10px] text-gray-400">
+            <div className="border-t border-gray-700 px-4 py-2 text-[10px] text-gray-400">
               {lastAction}
             </div>
           )}
-
-          {/* Chat */}
-          <div className="px-4 py-2">
-            <div className="mb-1 text-[10px] text-gray-500">Chat</div>
-            <div className="mb-2 max-h-32 overflow-y-auto">
-              {chat.length === 0 ? (
-                <div className="text-[10px] text-gray-600">No messages yet</div>
-              ) : (
-                chat.slice(-10).map((m, i) => (
-                  <div key={i} className="text-[10px]">
-                    <span className="font-medium text-blue-400">{m.user_name}:</span>{' '}
-                    <span className="text-gray-300">{m.message}</span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="flex gap-1">
-              <input
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendChat()}
-                placeholder="Type a message..."
-                className="flex-1 rounded border border-gray-600 bg-gray-800 px-2 py-1 text-[10px] text-white"
-              />
-              <button onClick={sendChat}
-                className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700">
-                Send
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </>

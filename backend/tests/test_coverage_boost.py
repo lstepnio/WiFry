@@ -361,14 +361,14 @@ class TestCollaboration:
     def test_get_mode(self):
         from app.services.collaboration import get_mode
 
-        assert get_mode() in ("spectate", "co-pilot", "download")
+        assert get_mode() in ("co-pilot", "download")
 
     async def test_set_mode_valid(self):
         from app.services.collaboration import set_mode, get_mode
 
-        result = set_mode("spectate")
-        assert get_mode() == "spectate"
-        assert result["mode"] == "spectate"
+        result = set_mode("download")
+        assert get_mode() == "download"
+        assert result["mode"] == "download"
 
     async def test_set_mode_co_pilot(self):
         from app.services.collaboration import set_mode, get_mode

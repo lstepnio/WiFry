@@ -188,7 +188,7 @@ class CollabModeRequest(BaseModel):
 
 @router.put("/api/v1/collab/mode")
 async def set_collab_mode(req: CollabModeRequest):
-    """Set collaboration mode: spectate (view-only), co-pilot (shared control), download (files only)."""
+    """Set collaboration mode: co-pilot (shared control) or download (files only)."""
     try:
         return collaboration.set_mode(req.mode)
     except ValueError as e:
@@ -199,7 +199,11 @@ async def set_collab_mode(req: CollabModeRequest):
 async def collab_websocket(ws: WebSocket, name: str = ""):
     """WebSocket for real-time collaboration sync."""
     await ws.accept()
-    user_id = await collaboration.connect_user(ws, name)
+    # Extract client IP for user identification
+    client_ip = ""
+    if ws.client:
+        client_ip = ws.client.host or ""
+    user_id = await collaboration.connect_user(ws, name, ip=client_ip)
 
     try:
         while True:
