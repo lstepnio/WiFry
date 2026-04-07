@@ -95,9 +95,56 @@ export default function Dashboard() {
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const { isEnabled } = useFeatureFlags();
   const wsRef = useRef<WebSocket | null>(null);
-  const ignoreNextNavigate = useRef(false);
+  const isRemoteUpdate = useRef(false);
 
-  // Collaboration WebSocket for navigation mirroring (auto-reconnect)
+  // Broadcast full navigation state on any change
+  // This captures ALL navigation: tabs, sub-tabs, sub-sub-tabs, panel selections
+  const navStateRef = useRef({ tab: 'sessions', impSubTab: 'profiles', sysSubTab: 'overview', analyzingCaptureId: null as string | null, selectedStreamId: null as string | null });
+
+  const broadcastNavState = useCallback(() => {
+    if (isRemoteUpdate.current) {
+      isRemoteUpdate.current = false;
+      return;
+    }
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'navigate', state: navStateRef.current }));
+    }
+  }, []);
+
+  // Wrap all state setters to auto-broadcast
+  const handleTabChange = useCallback((newTab: Tab) => {
+    setTab(newTab);
+    if (newTab !== 'captures') setAnalyzingCaptureId(null);
+    if (newTab !== 'streams') setSelectedStreamId(null);
+    navStateRef.current = { ...navStateRef.current, tab: newTab, analyzingCaptureId: null, selectedStreamId: null };
+    broadcastNavState();
+  }, [broadcastNavState]);
+
+  const handleImpSubTabChange = useCallback((sub: ImpairmentSubTab) => {
+    setImpSubTab(sub);
+    navStateRef.current = { ...navStateRef.current, impSubTab: sub };
+    broadcastNavState();
+  }, [broadcastNavState]);
+
+  const handleSysSubTabChange = useCallback((sub: SystemSubTab) => {
+    setSysSubTab(sub);
+    navStateRef.current = { ...navStateRef.current, sysSubTab: sub };
+    broadcastNavState();
+  }, [broadcastNavState]);
+
+  const handleAnalyze = useCallback((id: string | null) => {
+    setAnalyzingCaptureId(id);
+    navStateRef.current = { ...navStateRef.current, analyzingCaptureId: id };
+    broadcastNavState();
+  }, [broadcastNavState]);
+
+  const handleStreamSelect = useCallback((id: string | null) => {
+    setSelectedStreamId(id);
+    navStateRef.current = { ...navStateRef.current, selectedStreamId: id };
+    broadcastNavState();
+  }, [broadcastNavState]);
+
+  // Collaboration WebSocket (auto-reconnect)
   useEffect(() => {
     let alive = true;
     let reconnectTimer: ReturnType<typeof setTimeout>;
@@ -111,13 +158,16 @@ export default function Dashboard() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'navigate' && msg.tab) {
-            ignoreNextNavigate.current = true;
-            setTab(msg.tab as Tab);
-            if (msg.subTab) {
-              if (msg.tab === 'impairments') setImpSubTab(msg.subTab);
-              if (msg.tab === 'system') setSysSubTab(msg.subTab);
-            }
+          if (msg.type === 'navigate' && msg.state) {
+            // Apply full navigation state from remote user
+            isRemoteUpdate.current = true;
+            const s = msg.state;
+            if (s.tab) setTab(s.tab);
+            if (s.impSubTab) setImpSubTab(s.impSubTab);
+            if (s.sysSubTab) setSysSubTab(s.sysSubTab);
+            if (s.analyzingCaptureId !== undefined) setAnalyzingCaptureId(s.analyzingCaptureId);
+            if (s.selectedStreamId !== undefined) setSelectedStreamId(s.selectedStreamId);
+            navStateRef.current = s;
           } else if (msg.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong' }));
           }
@@ -126,51 +176,14 @@ export default function Dashboard() {
 
       ws.onclose = () => {
         wsRef.current = null;
-        if (alive) {
-          reconnectTimer = setTimeout(connect, 3000);
-        }
+        if (alive) reconnectTimer = setTimeout(connect, 3000);
       };
-
       ws.onerror = () => { ws.close(); };
     }
 
     connect();
-
-    return () => {
-      alive = false;
-      clearTimeout(reconnectTimer);
-      if (wsRef.current) wsRef.current.close();
-      wsRef.current = null;
-    };
+    return () => { alive = false; clearTimeout(reconnectTimer); wsRef.current?.close(); wsRef.current = null; };
   }, []);
-
-  const sendNavigate = useCallback((mainTab: string, subTab?: string) => {
-    if (ignoreNextNavigate.current) {
-      ignoreNextNavigate.current = false;
-      return;
-    }
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'navigate', tab: mainTab, subTab }));
-    }
-  }, []);
-
-  // Send navigation messages when user changes tab
-  const handleTabChange = useCallback((newTab: Tab) => {
-    setTab(newTab);
-    if (newTab !== 'captures') setAnalyzingCaptureId(null);
-    if (newTab !== 'streams') setSelectedStreamId(null);
-    sendNavigate(newTab);
-  }, [sendNavigate]);
-
-  const handleImpSubTabChange = useCallback((sub: ImpairmentSubTab) => {
-    setImpSubTab(sub);
-    sendNavigate('impairments', sub);
-  }, [sendNavigate]);
-
-  const handleSysSubTabChange = useCallback((sub: SystemSubTab) => {
-    setSysSubTab(sub);
-    sendNavigate('system', sub);
-  }, [sendNavigate]);
 
   // Filter tabs based on feature flags
   const visibleTabs = TABS.filter(t => {
@@ -253,11 +266,11 @@ export default function Dashboard() {
           analyzingCaptureId ? (
             <CaptureAnalysis
               captureId={analyzingCaptureId}
-              onBack={() => setAnalyzingCaptureId(null)}
+              onBack={() => handleAnalyze(null)}
             />
           ) : (
             <CaptureManager
-              onAnalyze={(id) => setAnalyzingCaptureId(id)}
+              onAnalyze={(id) => handleAnalyze(id)}
             />
           )
         )}
@@ -267,12 +280,12 @@ export default function Dashboard() {
           selectedStreamId ? (
             <StreamDetail
               sessionId={selectedStreamId}
-              onBack={() => setSelectedStreamId(null)}
+              onBack={() => handleStreamSelect(null)}
             />
           ) : (
             <div className="space-y-6">
               <ProxySettings />
-              <StreamMonitor onSelect={(id) => setSelectedStreamId(id)} />
+              <StreamMonitor onSelect={(id) => handleStreamSelect(id)} />
               <VideoProbe />
             </div>
           )
