@@ -8,29 +8,29 @@ dev:
 	@make frontend
 
 backend:
-	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+	cd backend && . .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 
 frontend:
 	cd frontend && npm run dev
 
 install:
-	cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+	cd backend && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 	cd frontend && npm install
 
 test:
-	cd backend && source .venv/bin/activate && python -m pytest tests/ -v
+	cd backend && . .venv/bin/activate && python -m pytest tests/ -v
 
 test-coverage:
-	cd backend && source .venv/bin/activate && python -m coverage run -m pytest tests/ -q && python -m coverage report --sort=cover
+	cd backend && . .venv/bin/activate && python -m coverage run -m pytest tests/ -q && python -m coverage report --sort=cover
 
 build:
 	cd frontend && npm run build
 
 ci-backend:
-	cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q --tb=short
+	cd backend && . .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest tests/ --ignore=tests/hw -q --tb=short
 
 ci-backend-release-risk:
-	cd backend && source .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest \
+	cd backend && . .venv/bin/activate && WIFRY_MOCK_MODE=true python -m pytest \
 		tests/test_runtime_state_boundaries.py \
 		tests/test_storage_scheduler.py \
 		tests/test_sessions.py \
