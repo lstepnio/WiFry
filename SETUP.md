@@ -267,6 +267,7 @@ sudo /opt/wifry/setup/wifry-recovery.sh
 /var/lib/wifry/                # Runtime data (survives updates)
   ├── captures/                # Packet capture .pcap files
   ├── sessions/                # Session metadata + artifacts
+  ├── scenarios/               # Saved scenario definitions
   ├── reports/                 # Generated HTML reports
   ├── bundles/                 # Support bundle .zip files
   ├── adb-files/               # ADB screenshots, bugreports

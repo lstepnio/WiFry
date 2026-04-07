@@ -21,6 +21,7 @@ from ..models.capture import (
     StartCaptureRequest,
 )
 from ..utils.shell import CommandResult, run
+from . import storage
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,7 @@ _lock = asyncio.Lock()
 
 
 def _captures_dir() -> Path:
-    d = settings.captures_dir if not settings.mock_mode else Path("/tmp/wifry-captures")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return storage.ensure_data_path("captures")
 
 
 def _metadata_path(capture_id: str) -> Path:

@@ -22,6 +22,7 @@ from ..models.adb import (
     LogcatSession,
 )
 from ..utils.shell import CommandResult, run
+from . import storage
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,11 @@ _logcat_processes: Dict[str, asyncio.subprocess.Process] = {}
 _logcat_buffers: Dict[str, Deque[LogcatLine]] = {}
 
 MAX_LOGCAT_LINES = 5000
-FILE_STORE = Path("/var/lib/wifry/adb-files")
 _lock = asyncio.Lock()
+
+
+def _file_store() -> Path:
+    return storage.ensure_data_path("adb_files")
 
 
 async def _adb(*args: str, timeout: float = 30) -> CommandResult:
@@ -358,8 +362,7 @@ def list_logcat_sessions() -> List[LogcatSession]:
 
 async def pull_file(serial: str, remote_path: str) -> str:
     """Pull a file from device to local storage. Returns local path."""
-    store = FILE_STORE if not settings.mock_mode else Path("/tmp/wifry-adb-files")
-    store.mkdir(parents=True, exist_ok=True)
+    store = _file_store()
 
     filename = Path(remote_path).name
     local_path = store / f"{serial.replace(':', '_')}_{filename}"
@@ -398,8 +401,7 @@ async def install_apk(serial: str, apk_path: str) -> str:
 
 async def screencap(serial: str) -> str:
     """Capture screenshot. Returns local path to PNG."""
-    store = FILE_STORE if not settings.mock_mode else Path("/tmp/wifry-adb-files")
-    store.mkdir(parents=True, exist_ok=True)
+    store = _file_store()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     local_path = store / f"screen_{serial.replace(':', '_')}_{ts}.png"
@@ -417,8 +419,7 @@ async def screencap(serial: str) -> str:
 
 async def bugreport(serial: str) -> str:
     """Capture bugreport. Returns local path."""
-    store = FILE_STORE if not settings.mock_mode else Path("/tmp/wifry-adb-files")
-    store.mkdir(parents=True, exist_ok=True)
+    store = _file_store()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     local_path = store / f"bugreport_{serial.replace(':', '_')}_{ts}.zip"
