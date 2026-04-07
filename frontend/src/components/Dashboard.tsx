@@ -97,30 +97,47 @@ export default function Dashboard() {
   const wsRef = useRef<WebSocket | null>(null);
   const ignoreNextNavigate = useRef(false);
 
-  // Collaboration WebSocket for navigation mirroring
+  // Collaboration WebSocket for navigation mirroring (auto-reconnect)
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/collab/ws?name=`);
-    wsRef.current = ws;
+    let alive = true;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'navigate' && msg.tab) {
-          // Mirror navigation from another user
-          ignoreNextNavigate.current = true;
-          setTab(msg.tab as Tab);
-        } else if (msg.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong' }));
-        } else if (msg.type === 'tunnel_closed') {
-          // Tunnel stopped — connection will close
+    function connect() {
+      if (!alive) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/collab/ws?name=`);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'navigate' && msg.tab) {
+            ignoreNextNavigate.current = true;
+            setTab(msg.tab as Tab);
+          } else if (msg.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong' }));
+          }
+        } catch { /* ignore */ }
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+        if (alive) {
+          reconnectTimer = setTimeout(connect, 3000);
         }
-      } catch { /* ignore parse errors */ }
+      };
+
+      ws.onerror = () => { ws.close(); };
+    }
+
+    connect();
+
+    return () => {
+      alive = false;
+      clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
-
-    ws.onclose = () => { wsRef.current = null; };
-
-    return () => { ws.close(); wsRef.current = null; };
   }, []);
 
   // Send navigation messages when user changes tab
