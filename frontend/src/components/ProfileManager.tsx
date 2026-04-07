@@ -19,10 +19,10 @@ export default function ProfileManager() {
 
   const allProfiles = data?.profiles ?? [];
   const profiles = filterCategory
-    ? allProfiles.filter(p => (p as any).category === filterCategory)
+    ? allProfiles.filter((profile) => profile.category === filterCategory)
     : allProfiles;
 
-  const categories = [...new Set(allProfiles.map(p => (p as any).category || 'network'))];
+  const categories = [...new Set(allProfiles.map((profile) => profile.category || 'network'))];
 
   const handleApply = async (name: string) => {
     setApplying(name);
@@ -65,15 +65,15 @@ export default function ProfileManager() {
     }
   };
 
-  const formatConfig = (p: any): string => {
+  const formatConfig = (profile: Profile): string => {
     const parts: string[] = [];
-    if (p.config?.delay?.ms) parts.push(`${p.config.delay.ms}ms delay`);
-    if (p.config?.delay?.jitter_ms) parts.push(`${p.config.delay.jitter_ms}ms jitter`);
-    if (p.config?.loss?.pct) parts.push(`${p.config.loss.pct}% loss`);
-    if (p.config?.rate?.kbit) parts.push(`${p.config.rate.kbit} kbit/s`);
+    if (profile.config?.delay?.ms) parts.push(`${profile.config.delay.ms}ms delay`);
+    if (profile.config?.delay?.jitter_ms) parts.push(`${profile.config.delay.jitter_ms}ms jitter`);
+    if (profile.config?.loss?.pct) parts.push(`${profile.config.loss.pct}% loss`);
+    if (profile.config?.rate?.kbit) parts.push(`${profile.config.rate.kbit} kbit/s`);
 
     // WiFi impairments summary
-    const wifi = p.wifi_config;
+    const wifi = profile.wifi_config;
     if (wifi) {
       if (wifi.tx_power?.enabled) parts.push(`TX ${wifi.tx_power.power_dbm}dBm`);
       if (wifi.channel_interference?.enabled) parts.push('CH interference');
@@ -85,7 +85,7 @@ export default function ProfileManager() {
     }
 
     // DNS impairments summary
-    const dns = p.dns_config;
+    const dns = profile.dns_config;
     if (dns?.enabled) {
       const dParts: string[] = [];
       if (dns.impairments?.delay_ms) dParts.push(`${dns.impairments.delay_ms}ms`);
@@ -138,36 +138,36 @@ export default function ProfileManager() {
       </div>
 
       <div className="space-y-1">
-        {profiles.map((p: any) => (
+        {profiles.map((profile) => (
           <div
-            key={p.name}
+            key={profile.name}
             className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-sm font-medium text-gray-900 dark:text-white">{p.name}</span>
-                {p.category && p.category !== 'network' && (
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${CATEGORY_COLORS[p.category] || ''}`}>
-                    {p.category}
+                <span className="text-sm font-medium text-gray-900 dark:text-white">{profile.name}</span>
+                {profile.category && profile.category !== 'network' && (
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${CATEGORY_COLORS[profile.category] || ''}`}>
+                    {profile.category}
                   </span>
                 )}
-                {(p.dns_config?.enabled) && (
+                {profile.dns_config?.enabled && (
                   <span className="rounded bg-cyan-900 px-1.5 py-0.5 text-[10px] text-cyan-300">DNS</span>
                 )}
-                <span className="ml-1 truncate text-xs text-gray-500">{formatConfig(p)}</span>
+                <span className="ml-1 truncate text-xs text-gray-500">{formatConfig(profile)}</span>
               </div>
             </div>
             <div className="ml-3 flex gap-2">
               <button
-                onClick={() => handleApply(p.name)}
-                disabled={applying === p.name}
+                onClick={() => handleApply(profile.name)}
+                disabled={applying === profile.name}
                 className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {applying === p.name ? 'Applying...' : 'Apply'}
+                {applying === profile.name ? 'Applying...' : 'Apply'}
               </button>
-              {!p.builtin && (
+              {!profile.builtin && (
                 <button
-                  onClick={() => handleDelete(p)}
+                  onClick={() => handleDelete(profile)}
                   className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
                 >
                   Delete

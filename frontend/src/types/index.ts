@@ -54,7 +54,8 @@ export interface Profile {
   category: string;
   tags: string[];
   config: ImpairmentConfig;
-  wifi_config?: Record<string, unknown> | null;
+  wifi_config?: WifiProfileConfig | null;
+  dns_config?: DnsProfileConfig | null;
 }
 
 export interface ProfileList {
@@ -263,4 +264,125 @@ export interface SystemSettings {
   anthropic_api_key_set: boolean;
   openai_api_key_set: boolean;
   dns_enabled: boolean;
+}
+
+export interface FeatureFlag {
+  enabled: boolean;
+  label: string;
+  description: string;
+  category: string;
+}
+
+export type FeatureFlags = Record<string, FeatureFlag>;
+
+export interface ActiveSessionInfo {
+  active_session_id: string | null;
+  session_name?: string | null;
+}
+
+export interface WifiFeatureSupport {
+  supported: boolean;
+  reason: string;
+}
+
+export interface WifiCapabilities {
+  features: Record<string, WifiFeatureSupport>;
+  [key: string]: unknown;
+}
+
+export interface WifiImpairmentState {
+  config: Record<string, Record<string, unknown>>;
+  active_impairments: string[];
+  disconnect_count: number;
+  storm_active: boolean;
+}
+
+export interface WifiProfileConfig {
+  tx_power?: {
+    enabled?: boolean;
+    power_dbm?: number;
+  };
+  channel_interference?: {
+    enabled?: boolean;
+    beacon_interval_ms?: number;
+    rts_threshold?: number;
+  };
+  periodic_disconnect?: {
+    enabled?: boolean;
+    interval_secs?: number;
+  };
+  broadcast_storm?: {
+    enabled?: boolean;
+  };
+  rate_limit?: {
+    enabled?: boolean;
+    legacy_rate_mbps?: number;
+  };
+  dhcp_disruption?: {
+    enabled?: boolean;
+    mode?: string;
+  };
+  band_switch?: {
+    enabled?: boolean;
+    target_band?: string;
+  };
+}
+
+export interface DnsProfileConfig {
+  enabled?: boolean;
+  impairments?: {
+    delay_ms?: number;
+    failure_rate_pct?: number;
+    servfail_rate_pct?: number;
+    nxdomain_domains?: string[];
+    ttl_override?: number;
+  };
+  upstream?: {
+    provider?: string;
+  };
+}
+
+export interface WifiNetwork {
+  ssid: string;
+  bssid: string;
+  channel: number;
+  frequency_mhz: number;
+  signal_dbm: number;
+  security: string;
+  band: string;
+  width: string;
+}
+
+export interface WifiChannelInfo {
+  channel: number;
+  frequency_mhz: number;
+  band: string;
+  network_count: number;
+  strongest_signal_dbm: number;
+  networks: string[];
+}
+
+export interface WifiScanData {
+  scan_interface: string;
+  our_channel: number;
+  our_band: string;
+  network_count: number;
+  networks: WifiNetwork[];
+  channels_2g: WifiChannelInfo[];
+  channels_5g: WifiChannelInfo[];
+}
+
+export interface GremlinStatus {
+  active: boolean;
+  intensity: number;
+  intensity_label: string;
+  stall_count: number;
+  activated_at: string | null;
+  message: string;
+  details: {
+    drop_pct: number;
+    tls_delay_ms: number;
+    tls_jitter_ms: number;
+    stall_interval: string;
+  };
 }

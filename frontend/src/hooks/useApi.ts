@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+export type ApiFetcher<T> = (signal: AbortSignal) => Promise<T>;
+
 interface UseApiResult<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  refresh: () => void;
+  refresh: () => Promise<void>;
 }
 
 export function useApi<T>(
-  fetcher: (signal: AbortSignal) => Promise<T>,
+  fetcher: ApiFetcher<T>,
   pollInterval?: number
 ): UseApiResult<T> {
   const [data, setData] = useState<T | null>(null);

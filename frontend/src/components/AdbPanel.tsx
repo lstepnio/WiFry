@@ -233,7 +233,7 @@ export default function AdbPanel() {
     if (!selectedDevice) return;
     try {
       await api.adbSendKey(selectedDevice, keycode);
-    } catch (e) {
+    } catch {
       // silent for key events
     }
   };

@@ -129,7 +129,7 @@ export default function VideoProbe() {
         setDiscoveredFiles([]);
         setError('No media segments found in ' + segmentDir);
       }
-    } catch (e) {
+    } catch {
       setError('Failed to discover segments');
     }
   };

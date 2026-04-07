@@ -1,22 +1,12 @@
 import { useCallback, useState } from 'react';
+import {
+  clearWifiImpairments,
+  getWifiImpairmentCapabilities,
+  getWifiImpairments,
+  updateWifiImpairments,
+} from '../api/client';
 import { useApi } from '../hooks/useApi';
-
-interface WifiImpairmentState {
-  config: Record<string, Record<string, unknown>>;
-  active_impairments: string[];
-  disconnect_count: number;
-  storm_active: boolean;
-}
-
-interface FeatureSupport {
-  supported: boolean;
-  reason: string;
-}
-
-interface WifiCapabilities {
-  features: Record<string, FeatureSupport>;
-  [key: string]: unknown;
-}
+import type { WifiCapabilities, WifiImpairmentState } from '../types';
 
 interface ToggleRowProps {
   label: string;
@@ -71,19 +61,17 @@ function Slider({ label, value, onChange, min, max, step = 1, unit }: {
 }
 
 export default function WifiImpairmentPanel() {
-  const fetcher = useCallback(async () => {
-    const res = await fetch('/api/v1/wifi-impairments');
-    return res.json();
-  }, []);
+  const fetcher = useCallback(() => getWifiImpairments(), []);
   const { data: state, refresh } = useApi<WifiImpairmentState>(fetcher, 5000);
 
   const capsFetcher = useCallback(async () => {
     try {
-      const res = await fetch('/api/v1/wifi-impairments/capabilities');
-      return res.ok ? res.json() : null;
-    } catch { return null; }
+      return await getWifiImpairmentCapabilities();
+    } catch {
+      return null;
+    }
   }, []);
-  const { data: caps } = useApi<WifiCapabilities>(capsFetcher);
+  const { data: caps } = useApi<WifiCapabilities | null>(capsFetcher);
 
   const isSupported = (featureId: string): boolean => {
     if (!caps?.features) return true; // Default to enabled while loading
@@ -118,13 +106,9 @@ export default function WifiImpairmentPanel() {
   const handleApply = async () => {
     setApplying(true);
     try {
-      await fetch('/api/v1/wifi-impairments', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
+      await updateWifiImpairments(config);
       refresh();
-    } catch (e) {
+    } catch {
       alert('Failed to apply WiFi impairments');
     } finally {
       setApplying(false);
@@ -134,7 +118,7 @@ export default function WifiImpairmentPanel() {
   const handleClear = async () => {
     setApplying(true);
     try {
-      await fetch('/api/v1/wifi-impairments', { method: 'DELETE' });
+      await clearWifiImpairments();
       setConfig(prev => {
         const cleared = { ...prev };
         for (const key of Object.keys(cleared)) {
@@ -143,7 +127,7 @@ export default function WifiImpairmentPanel() {
         return cleared;
       });
       refresh();
-    } catch (e) {
+    } catch {
       alert('Failed to clear');
     } finally {
       setApplying(false);

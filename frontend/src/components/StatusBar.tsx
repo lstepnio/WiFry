@@ -3,29 +3,43 @@
  * Always visible below the header.
  */
 import { useCallback } from 'react';
+import { getActiveSession, getImpairments, getStreams } from '../api/client';
 import { useApi } from '../hooks/useApi';
+import type { ActiveSessionInfo, InterfaceImpairmentState, StreamSessionSummary } from '../types';
 
 export default function StatusBar() {
   const sessionFetcher = useCallback(async () => {
-    try { const r = await fetch('/api/v1/sessions/active'); return r.ok ? r.json() : null; } catch { return null; }
+    try {
+      return await getActiveSession();
+    } catch {
+      return null;
+    }
   }, []);
-  const { data: session } = useApi(sessionFetcher, 5000);
+  const { data: session } = useApi<ActiveSessionInfo | null>(sessionFetcher, 5000);
 
-  const impFetcher = useCallback(async () => {
-    try { const r = await fetch('/api/v1/impairments'); return r.ok ? r.json() : []; } catch { return []; }
+  const impairmentFetcher = useCallback(async () => {
+    try {
+      return await getImpairments();
+    } catch {
+      return [];
+    }
   }, []);
-  const { data: impairments } = useApi(impFetcher, 5000);
+  const { data: impairments } = useApi<InterfaceImpairmentState[]>(impairmentFetcher, 5000);
 
   const streamFetcher = useCallback(async () => {
-    try { const r = await fetch('/api/v1/streams'); return r.ok ? r.json() : []; } catch { return []; }
+    try {
+      return await getStreams();
+    } catch {
+      return [];
+    }
   }, []);
-  const { data: streams } = useApi(streamFetcher, 5000);
+  const { data: streams } = useApi<StreamSessionSummary[]>(streamFetcher, 5000);
 
-  const activeImps = (impairments as any[] ?? []).filter((i: any) => i.active);
-  const activeStreams = (streams as any[] ?? []).filter((s: any) => s.active);
-  const activeSession = (session as any)?.active_session_id;
+  const activeImpairments = (impairments ?? []).filter((impairment) => impairment.active);
+  const activeStreams = (streams ?? []).filter((stream) => stream.active);
+  const activeSession = session?.active_session_id;
 
-  const hasAnything = activeSession || activeImps.length > 0 || activeStreams.length > 0;
+  const hasAnything = activeSession || activeImpairments.length > 0 || activeStreams.length > 0;
 
   if (!hasAnything) return null;
 
@@ -36,14 +50,14 @@ export default function StatusBar() {
           <div className="flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
             <span className="text-gray-400">Session:</span>
-            <span className="font-medium text-green-400">{(session as any)?.session_name || activeSession}</span>
+            <span className="font-medium text-green-400">{session?.session_name || activeSession}</span>
           </div>
         )}
-        {activeImps.length > 0 && (
+        {activeImpairments.length > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-orange-500" />
             <span className="text-gray-400">Impairments active on</span>
-            <span className="font-medium text-orange-400">{activeImps.map((i: any) => i.interface).join(', ')}</span>
+            <span className="font-medium text-orange-400">{activeImpairments.map((impairment) => impairment.interface).join(', ')}</span>
           </div>
         )}
         {activeStreams.length > 0 && (

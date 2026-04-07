@@ -6,16 +6,9 @@
  * surfaces do not briefly appear while flags are loading.
  */
 import { useCallback } from 'react';
+import { getFeatureFlags } from '../api/client';
+import type { FeatureFlags } from '../types';
 import { useApi } from './useApi';
-
-interface FeatureFlag {
-  enabled: boolean;
-  label: string;
-  description: string;
-  category: string;
-}
-
-type Flags = Record<string, FeatureFlag>;
 
 const FALLBACK_ENABLED: Record<string, boolean> = {
   impairments_network: true,
@@ -42,14 +35,13 @@ const FALLBACK_ENABLED: Record<string, boolean> = {
 export function useFeatureFlags() {
   const fetcher = useCallback(async () => {
     try {
-      const res = await fetch('/api/v1/system/features');
-      return res.ok ? res.json() : {};
+      return await getFeatureFlags();
     } catch {
-      return {};
+      return {} as FeatureFlags;
     }
   }, []);
 
-  const { data: flags } = useApi<Flags>(fetcher);
+  const { data: flags } = useApi<FeatureFlags>(fetcher);
 
   const isEnabled = (flagName: string): boolean => {
     const flag = flags?.[flagName];

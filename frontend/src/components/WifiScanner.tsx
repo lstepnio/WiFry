@@ -1,34 +1,6 @@
 import { useState } from 'react';
-
-interface WifiNetwork {
-  ssid: string;
-  bssid: string;
-  channel: number;
-  frequency_mhz: number;
-  signal_dbm: number;
-  security: string;
-  band: string;
-  width: string;
-}
-
-interface ChannelInfo {
-  channel: number;
-  frequency_mhz: number;
-  band: string;
-  network_count: number;
-  strongest_signal_dbm: number;
-  networks: string[];
-}
-
-interface ScanData {
-  scan_interface: string;
-  our_channel: number;
-  our_band: string;
-  network_count: number;
-  networks: WifiNetwork[];
-  channels_2g: ChannelInfo[];
-  channels_5g: ChannelInfo[];
-}
+import { getWifiScan } from '../api/client';
+import type { WifiScanData } from '../types';
 
 function signalColor(dbm: number): string {
   if (dbm >= -50) return 'bg-green-500';
@@ -43,15 +15,14 @@ function signalBarWidth(dbm: number): number {
 }
 
 export default function WifiScanner() {
-  const [data, setData] = useState<ScanData | null>(null);
+  const [data, setData] = useState<WifiScanData | null>(null);
   const [scanning, setScanning] = useState(false);
 
   const scan = async () => {
     setScanning(true);
     try {
-      const res = await fetch('/api/v1/wifi/scan');
-      setData(await res.json());
-    } catch (e) {
+      setData(await getWifiScan());
+    } catch {
       alert('Scan failed');
     } finally {
       setScanning(false);

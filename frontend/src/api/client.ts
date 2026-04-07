@@ -3,12 +3,15 @@
  */
 
 import type {
+  ActiveSessionInfo,
   AdbDevice,
   AdbShellResult,
   AnalysisResult,
   ApStatus,
   CaptureFilters,
   CaptureInfo,
+  FeatureFlags,
+  GremlinStatus,
   ImpairmentConfig,
   InterfaceImpairmentState,
   InterfaceInfo,
@@ -21,21 +24,40 @@ import type {
   StreamSessionSummary,
   SystemInfo,
   SystemSettings,
+  WifiCapabilities,
   WifiClient,
+  WifiImpairmentState,
+  WifiScanData,
 } from '../types';
 
 const BASE = '/api/v1';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+  const headers = new Headers(options?.headers);
+  if (options?.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
   }
-  return res.json();
+
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers,
+  });
+  const body = await res.text();
+
+  if (!res.ok) {
+    throw new Error(body ? `API ${res.status}: ${body}` : `API ${res.status}`);
+  }
+
+  if (!body) {
+    return undefined as T;
+  }
+
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    return JSON.parse(body) as T;
+  }
+
+  return body as T;
 }
 
 // --- Impairments ---
@@ -109,6 +131,29 @@ export async function getClients(): Promise<WifiClient[]> {
 
 export async function getApStatus(): Promise<ApStatus> {
   return request('/network/ap/status');
+}
+
+export async function getWifiScan(): Promise<WifiScanData> {
+  return request('/wifi/scan');
+}
+
+export async function getWifiImpairments(): Promise<WifiImpairmentState> {
+  return request('/wifi-impairments');
+}
+
+export async function getWifiImpairmentCapabilities(): Promise<WifiCapabilities> {
+  return request('/wifi-impairments/capabilities');
+}
+
+export async function updateWifiImpairments(config: Record<string, Record<string, unknown>>): Promise<void> {
+  await request('/wifi-impairments', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function clearWifiImpairments(): Promise<void> {
+  await request('/wifi-impairments', { method: 'DELETE' });
 }
 
 // --- Captures ---
@@ -260,4 +305,24 @@ export async function getSystemInfo(): Promise<SystemInfo> {
 
 export async function getSettings(): Promise<SystemSettings> {
   return request('/system/settings');
+}
+
+export async function getFeatureFlags(): Promise<FeatureFlags> {
+  return request('/system/features');
+}
+
+export async function getActiveSession(): Promise<ActiveSessionInfo> {
+  return request('/sessions/active');
+}
+
+export async function getGremlinStatus(): Promise<GremlinStatus> {
+  return request('/gremlin/status');
+}
+
+export async function activateGremlin(intensity: number): Promise<GremlinStatus> {
+  return request(`/gremlin/activate?intensity=${intensity}`, { method: 'POST' });
+}
+
+export async function deactivateGremlin(): Promise<GremlinStatus> {
+  return request('/gremlin/deactivate', { method: 'POST' });
 }

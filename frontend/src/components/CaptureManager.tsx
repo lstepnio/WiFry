@@ -103,8 +103,16 @@ export default function CaptureManager({
             <button
               onClick={async () => {
                 if (!confirm(`Delete all ${(captures ?? []).length} captures?`)) return;
+                let failedDeletes = 0;
                 for (const c of (captures ?? [])) {
-                  try { await api.deleteCapture(c.id); } catch {}
+                  try {
+                    await api.deleteCapture(c.id);
+                  } catch {
+                    failedDeletes += 1;
+                  }
+                }
+                if (failedDeletes > 0) {
+                  alert(`Failed to delete ${failedDeletes} capture${failedDeletes === 1 ? '' : 's'}.`);
                 }
                 refresh();
               }}

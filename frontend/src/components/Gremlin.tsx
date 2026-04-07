@@ -1,25 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { activateGremlin, deactivateGremlin, getGremlinStatus } from '../api/client';
+import type { GremlinStatus } from '../types';
 
 const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-const BASE = '/api/v1';
 
 const INTENSITY_LABELS = ['', 'Mild', 'Medium', 'Severe', 'Extreme'];
 const INTENSITY_COLORS = ['', 'text-yellow-400', 'text-orange-400', 'text-red-400', 'text-red-600'];
-
-interface GremlinStatus {
-  active: boolean;
-  intensity: number;
-  intensity_label: string;
-  stall_count: number;
-  activated_at: string | null;
-  message: string;
-  details: {
-    drop_pct: number;
-    tls_delay_ms: number;
-    tls_jitter_ms: number;
-    stall_interval: string;
-  };
-}
 
 export default function Gremlin() {
   const [revealed, setRevealed] = useState(false);
@@ -27,6 +13,16 @@ export default function Gremlin() {
   const [toggling, setToggling] = useState(false);
   const [intensity, setIntensity] = useState(2);
   const seqRef = useRef<string[]>([]);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const nextStatus = await getGremlinStatus();
+      setStatus(nextStatus);
+      setIntensity(nextStatus.intensity || 2);
+    } catch {
+      // Ignore status polling failures while hidden.
+    }
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -43,28 +39,15 @@ export default function Gremlin() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await fetch(`${BASE}/gremlin/status`);
-      if (res.ok) {
-        const data = await res.json();
-        setStatus(data);
-        setIntensity(data.intensity || 2);
-      }
-    } catch {}
-  }, []);
+  }, [fetchStatus]);
 
   const toggle = async () => {
     setToggling(true);
     try {
       if (status?.active) {
-        const res = await fetch(`${BASE}/gremlin/deactivate`, { method: 'POST' });
-        if (res.ok) setStatus(await res.json());
+        setStatus(await deactivateGremlin());
       } else {
-        const res = await fetch(`${BASE}/gremlin/activate?intensity=${intensity}`, { method: 'POST' });
-        if (res.ok) setStatus(await res.json());
+        setStatus(await activateGremlin(intensity));
       }
     } catch (e) {
       alert('Gremlin error: ' + e);
@@ -77,8 +60,7 @@ export default function Gremlin() {
     setIntensity(val);
     if (status?.active) {
       // Re-activate with new intensity
-      const res = await fetch(`${BASE}/gremlin/activate?intensity=${val}`, { method: 'POST' });
-      if (res.ok) setStatus(await res.json());
+      setStatus(await activateGremlin(val));
     }
   };
 
