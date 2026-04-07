@@ -237,20 +237,54 @@ async def reset_feature_flags():
 
 @router.delete("/data/all")
 async def delete_all_data():
-    """Delete ALL WiFry data (captures, sessions, logs, segments, etc.). Factory reset of data only."""
+    """Full factory reset — delete ALL data, settings, and reset network config to defaults."""
     import shutil
-    from ..services import storage
-    paths = storage.get_data_paths()
+
+    base = Path("/var/lib/wifry") if not settings.mock_mode else Path("/tmp/wifry")
     deleted = {}
-    for category, dir_path in paths.items():
-        if category.startswith("_"):
-            continue
-        p = Path(dir_path)
+
+    # Delete all data directories
+    data_dirs = [
+        "captures", "sessions", "segments", "reports", "annotations",
+        "adb-files", "hdmi-captures", "bundles", "speedtests",
+        "coredns", "teleport", "network-profiles",
+    ]
+    for d in data_dirs:
+        p = base / d
         if p.exists():
             count = sum(1 for f in p.rglob("*") if f.is_file())
             shutil.rmtree(p, ignore_errors=True)
             p.mkdir(parents=True, exist_ok=True)
-            deleted[category] = count
+            deleted[d] = count
+
+    # Delete config files (settings, network config, feature flags, update backup)
+    config_files = [
+        "settings.json", "network_config.json", "feature_flags.json",
+        "update_backup.json", "dns_config.json",
+    ]
+    for f in config_files:
+        p = base / f
+        if p.exists():
+            p.unlink()
+            deleted[f] = 1
+
+    # Reset network config to defaults
+    try:
+        from ..services import network_config
+        await network_config.apply_defaults()
+        deleted["network_reset"] = "defaults applied"
+    except Exception as e:
+        deleted["network_reset"] = f"failed: {e}"
+
+    # Fix captures dir permissions (tshark needs world-writable)
+    captures_dir = base / "captures"
+    captures_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        captures_dir.chmod(0o1777)
+    except Exception:
+        pass
+
+    logger.info("Factory reset complete: %s", deleted)
     return {"status": "ok", "deleted": deleted}
 
 
