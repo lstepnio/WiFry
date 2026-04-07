@@ -1,4 +1,4 @@
-import type { Notification as NotificationItem } from '../hooks/useNotification';
+import type { NotificationItem } from '../hooks/useNotification';
 
 const TYPE_STYLES: Record<string, string> = {
   success: 'bg-green-600',
@@ -16,10 +16,11 @@ export default function NotificationStack({
   if (notifications.length === 0) return null;
 
   return (
-    <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+    <div className="fixed right-4 top-4 z-50 flex flex-col gap-2" aria-live="polite" aria-atomic="true">
       {notifications.map((n) => (
         <div
           key={n.id}
+          role={n.type === 'error' ? 'alert' : 'status'}
           className={`animate-fade-in flex items-start gap-3 rounded-lg px-4 py-3 text-sm text-white shadow-lg ${TYPE_STYLES[n.type] || TYPE_STYLES.info}`}
           style={{ minWidth: 280, maxWidth: 400 }}
         >
