@@ -156,17 +156,24 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
             except asyncio.TimeoutError:
                 pass  # Still running — update live stats
 
-            if pcap and pcap.exists() and info:
+            if pcap and info:
                 try:
-                    size = pcap.stat().st_size
-                    info.file_size_bytes = size
-                except OSError:
+                    # Use sudo stat since tshark creates files as root
+                    result = await run("stat", "-c", "%s", str(pcap), sudo=True, check=False)
+                    if result.success and result.stdout.strip().isdigit():
+                        info.file_size_bytes = int(result.stdout.strip())
+                except Exception:
                     pass
 
         await stderr_task
         await stdout_task
 
-        # Process finished — finalize
+        # Process finished — fix ownership FIRST (sudo tshark creates files as root)
+        if pcap and pcap.exists():
+            await run("chmod", "644", str(pcap), sudo=True, check=False)
+            await run("chown", "wifry:wifry", str(pcap), sudo=True, check=False)
+
+        # Now finalize metadata
         info = _captures.get(capture_id)
         if not info:
             return
@@ -180,10 +187,7 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
 
         info.stopped_at = datetime.now(timezone.utc).isoformat()
 
-        # Fix ownership — sudo tshark creates files as root
         if pcap and pcap.exists():
-            await run("chmod", "644", str(pcap), sudo=True, check=False)
-            await run("chown", "wifry:wifry", str(pcap), sudo=True, check=False)
             info.file_size_bytes = pcap.stat().st_size
             count = await _count_packets(info.pcap_path)
             info.packet_count = count
