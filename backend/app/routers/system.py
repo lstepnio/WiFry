@@ -49,6 +49,18 @@ async def get_system_info():
     except Exception:
         pass
 
+    # Load averages + CPU cores
+    try:
+        import os
+        load1, load5, load15 = os.getloadavg()
+        info["load_avg"] = [round(load1, 2), round(load5, 2), round(load15, 2)]
+        info["cpu_cores"] = os.cpu_count() or 1
+        info["cpu_usage_pct"] = round(load1 / (os.cpu_count() or 1) * 100, 1)
+    except Exception:
+        info["load_avg"] = [0, 0, 0]
+        info["cpu_cores"] = 1
+        info["cpu_usage_pct"] = 0
+
     # Memory
     try:
         result = await run("free", "-m", check=False)

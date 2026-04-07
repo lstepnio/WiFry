@@ -96,6 +96,9 @@ export interface SystemInfo {
   platform: string;
   os: string;
   temperature_c?: number | null;
+  load_avg?: number[];
+  cpu_cores?: number;
+  cpu_usage_pct?: number;
   memory_total_mb?: number;
   memory_used_mb?: number;
   memory_available_mb?: number | null;

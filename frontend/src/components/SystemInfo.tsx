@@ -74,6 +74,24 @@ export default function SystemInfo() {
           </div>
         )}
 
+        {info.load_avg && (
+          <div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">CPU ({info.cpu_cores} cores)</div>
+            <div className={`font-medium ${(info.cpu_usage_pct ?? 0) > 80 ? 'text-red-600' : (info.cpu_usage_pct ?? 0) > 50 ? 'text-yellow-600' : 'text-gray-900 dark:text-white'}`}>
+              {info.cpu_usage_pct}% utilization
+            </div>
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+              <div
+                className={`h-full rounded-full ${
+                  (info.cpu_usage_pct ?? 0) > 80 ? 'bg-red-500' : (info.cpu_usage_pct ?? 0) > 50 ? 'bg-yellow-500' : 'bg-blue-500'
+                }`}
+                style={{ width: `${Math.min(info.cpu_usage_pct ?? 0, 100)}%` }}
+              />
+            </div>
+            <div className="mt-0.5 text-[10px] text-gray-500">Load: {info.load_avg.join(' / ')}</div>
+          </div>
+        )}
+
         {info.memory_total_mb && (
           <div>
             <div className="text-xs text-gray-500 dark:text-gray-400">Memory</div>
