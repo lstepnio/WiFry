@@ -201,11 +201,19 @@ def _generate_corefile(config: DnsConfig) -> None:
         main_block += "    }\n"
 
     # NXDOMAIN injection via template
+    # Template regex must match FQDN with trailing dot, and needs
+    # match/answer to properly intercept before forward plugin
     for domain_pattern in config.impairments.nxdomain_domains:
-        # Convert glob pattern to regex
-        regex = domain_pattern.replace(".", "\\.").replace("*", ".*")
-        main_block += f"    template IN ANY {regex} {{\n"
+        # Convert glob pattern to CoreDNS template regex
+        # *.example.com → (.*\.)?example\.com\.$
+        # example.com → (.*\.)?example\.com\.$  (block domain + subdomains)
+        clean = domain_pattern.lstrip("*").lstrip(".")
+        escaped_domain = clean.replace(".", r"\.")
+        # Build regex: (.*\.)?example\.com\. — matches domain + subdomains with trailing dot
+        nxdomain_regex = r"(.*\.)?" + escaped_domain + r"\."
+        main_block += f"    template IN ANY {nxdomain_regex} {{\n"
         main_block += "        rcode NXDOMAIN\n"
+        main_block += '        authority "{.}. 60 IN SOA ns.wifry. admin.wifry. 0 0 0 0 60"\n'
         main_block += "    }\n"
 
     # Random SERVFAIL via erratic plugin
