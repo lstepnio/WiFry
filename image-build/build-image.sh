@@ -400,7 +400,7 @@ ip addr add 192.168.4.1/24 dev wlan0 2>/dev/null || true
 ip link set wlan0 up 2>/dev/null || true
 
 # Restart services
-systemctl restart hostapd dnsmasq wifry-backend wifry-frontend
+systemctl restart hostapd dnsmasq wifry-backend
 FIRSTBOOT
 chmod +x "$INSTALL_DIR/setup/first-boot.sh"
 

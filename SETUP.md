@@ -1,371 +1,198 @@
-# WiFry - IP Video Edition — RPi Setup Guide
+# WiFry Setup Guide
+
+This guide describes how to install, deploy, and verify WiFry based on the current code and scripts in this repo.
+
+## Current Runtime Truth
+
+- On a deployed box, `wifry-backend` serves both the API and the built frontend on port `8080`
+- The production UI is served from `frontend/dist` by FastAPI
+- Local frontend development still uses Vite on port `3000`
+- The supported operator flow is `Network Config -> Session -> Bundle/Share`
+- Live remote access and collaboration are experimental
+
+Use [RUNBOOKS.md](RUNBOOKS.md) for day-two operations such as updates, recovery, and security checks.
+
+The examples below use `pi@wifry.local`. Substitute the current Pi IP if mDNS does not resolve on your network.
 
 ## Prerequisites
 
 ### Hardware
-- **Raspberry Pi 4B+ or 5** (4GB+ RAM recommended)
-- **MicroSD card** (32GB+ recommended, Class 10 / A2)
-- **Ethernet cable** connected to your upstream network
-- **Power supply** (USB-C, 5V 3A for RPi 4, 5V 5A for RPi 5)
 
-### Optional Hardware
-- **Elgato Cam Link 4K** — for HDMI capture from STBs (enable via feature flag)
-- **USB WiFi adapter** — if you need a second WiFi interface
-- **HDMI monitor + USB keyboard** — for physical access recovery
+- Raspberry Pi 4B or 5
+- 32 GB+ microSD card recommended
+- Ethernet connection to an upstream network
+- Power supply suitable for the Pi model
 
----
+### Optional hardware
+
+- HDMI monitor + USB keyboard for local recovery
+- USB WiFi adapter if you need additional wireless hardware
+- Elgato Cam Link 4K for HDMI capture workflows
 
 ## Deployment Methods
 
-### Method 1: Pre-built Image (Recommended for field deployment)
+### Method 1: release image
 
-The fastest way. Download a pre-built image with WiFry fully installed.
+If a release includes a Raspberry Pi image artifact, flash that image and then verify the box using the commands below. Exact defaults for SSH credentials and first-boot behavior should come from the release notes for that tag, not from stale assumptions in older docs.
 
-1. Download the latest `wifry-<version>-rpi-arm64.img.xz` from GitHub Releases
-2. Flash to SD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/):
-   - Choose **"Use custom"** and select the downloaded `.img.xz` file
-   - No need to configure anything — WiFry defaults are pre-baked
-3. Insert SD card, connect Ethernet, power on
-4. Wait ~60 seconds for first boot
-5. Done — connect to WiFi `WiFry` (password: `wifry1234`)
+### Method 2: deploy from a laptop
 
-**Default credentials:**
-| Service | Value |
-|---------|-------|
-| WiFi SSID | `WiFry` |
-| WiFi Password | `wifry1234` |
-| SSH user | `pi` |
-| SSH password | `wifry` |
-| Web UI (WiFi) | http://192.168.4.1:8080 |
-| Web UI (Ethernet) | http://\<rpi-ip\>:8080 |
-| Fallback IP | http://169.254.42.1:8080 |
-
-> **First login**: WiFry shows a configuration banner encouraging you to change the WiFi SSID/password and set up your environment.
-
-### Method 2: Deploy from Laptop (Recommended for development)
-
-Build on your fast laptop, deploy to a fresh RPi OS install.
+This is the most practical development path.
 
 ```bash
-# On your laptop:
-git clone <repo-url> WiFry && cd WiFry
-make install          # One-time: install local dev dependencies
-make deploy-ssh RPI=pi@<rpi-ip>   # Build + deploy (~10 min first time)
-```
-
-### Method 3: Direct Install on RPi
-
-```bash
-# SSH into RPi running Raspberry Pi OS Bookworm 64-bit:
-git clone <repo-url> /tmp/wifry
-cd /tmp/wifry
-sudo bash setup/install.sh
-```
-
----
-
-## Building Custom Images
-
-For teams that need to distribute WiFry to multiple RPis:
-
-```bash
-# On a Linux build machine (or CI):
-cd image-build
-./build-image.sh 1.0.0
-# Output: image-build/output/wifry-1.0.0-rpi-arm64.img.xz
-```
-
-Or use GitHub Actions — push a tag to build automatically:
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-# → GitHub Actions builds image and creates a Release with download link
-```
-
-The image builder uses [pi-gen](https://github.com/RPi-Distro/pi-gen) (the official Raspberry Pi OS build tool) with a custom stage that installs all WiFry dependencies, code, and configuration.
-
----
-
-## Step 1: Flash and Boot
-
-### Using pre-built image:
-1. Flash `wifry-*.img.xz` to SD card via RPi Imager
-2. Insert, connect Ethernet, power on
-3. Wait 60 seconds
-
-### Using RPi OS + deploy:
-1. Flash RPi OS Bookworm 64-bit (enable SSH in Imager settings)
-2. Boot, connect Ethernet
-3. From laptop: `make deploy-ssh RPI=pi@<rpi-ip>`
-4. Flash to your SD card
-5. Insert SD card into RPi, connect Ethernet, boot
-
-## Step 2: Find Your RPi's IP
-
-```bash
-# Option A: Check your router's DHCP table for "wifry"
-
-# Option B: Scan the network
-ping wifry.local
-
-# Option C: If you have a monitor attached, it shows on screen
-```
-
-## Step 3: Deploy WiFry
-
-### Method A: From Your Laptop (Recommended)
-
-This builds the frontend on your fast laptop and deploys to the RPi:
-
-```bash
-# Clone the repo on your laptop
 git clone <repo-url> WiFry
 cd WiFry
-
-# Install local dev dependencies (one-time)
 make install
-
-# Deploy to RPi (builds frontend, syncs, installs everything)
-make deploy-ssh RPI=pi@<rpi-ip>
+make deploy-ssh RPI=pi@wifry.local
 ```
 
-The install takes ~10-15 minutes on first run (downloads packages, sets up venv).
+This path builds the frontend locally, syncs the repo to the Pi, and runs `setup/install.sh`.
 
-### Method B: Directly on the RPi
+### Method 3: direct install on the Pi
 
 ```bash
-# SSH into the RPi
-ssh pi@<rpi-ip>
-
-# Clone and install
 git clone <repo-url> /tmp/wifry
 cd /tmp/wifry
 sudo bash setup/install.sh
 ```
 
-⚠️ This is slower because the frontend builds on the RPi (~5-10 min).
+This is slower because the frontend build runs on the Pi.
 
-## Step 4: Verify Installation
+## Verify the Installation
 
-The install script runs verification checks automatically. You should see:
-
-```
-  ✓ Backend API responding
-  ✓ Frontend built
-  ✓ hostapd running
-  ✓ dnsmasq running
-  ✓ WiFi AP IP set
-  ✓ IP forwarding enabled
-  ✓ NAT rules set
-  ✓ tshark available
-  ✓ ffmpeg available
-  ✓ CoreDNS available
-  ✓ Recovery console enabled
-```
-
-Or verify manually from your laptop:
+After install, verify the current service set and the backend health endpoint:
 
 ```bash
-make verify-ssh RPI=pi@<rpi-ip>
+ssh pi@wifry.local "sudo systemctl status wifry-backend hostapd dnsmasq --no-pager"
+ssh pi@wifry.local "curl -sf http://localhost:8080/api/v1/health"
+ssh pi@wifry.local "curl -sf http://localhost:8080/api/v1/system/dependencies | python3 -m json.tool"
 ```
 
-## Step 5: Connect
-
-### Via WiFi (STBs connect here)
-- **SSID**: `WiFry`
-- **Password**: `wifry1234`
-- **Web UI**: http://192.168.4.1:8080
-
-### Via Ethernet (from your laptop)
-- **Web UI**: http://\<rpi-ip\>:8080
-- **API Docs**: http://\<rpi-ip\>:8080/docs
-
-### Fallback (if everything else fails)
-- Connect laptop directly to RPi's Ethernet port
-- Navigate to: http://169.254.42.1:8080
-
-### Physical Recovery
-- Plug in HDMI monitor + USB keyboard
-- Press **Alt+F2** for the recovery console
-
-## First-Run Workflow
-
-After the box is reachable, use this order in the UI:
-
-1. **System > Network Config** — set the WiFi hotspot, Ethernet uplink, and any reusable boot profiles.
-2. **Sessions** — create a session before you capture packets, collect ADB artifacts, or analyze a stream.
-3. **Session detail > Bundle + Share** — use this as the supported sharing path when you need to hand off evidence.
-
-### Experimental Surfaces
-
-- **System > Remote Access** is an opt-in, experimental live troubleshooting surface for Cloudflare Tunnel and collaboration.
-- **Scenario APIs** remain available for automation/testing, but there is no supported primary UI workflow for them.
-
----
-
-## Quick Reference
-
-### Day-to-Day Commands
+You should also confirm the built frontend exists:
 
 ```bash
-# Check status
-make status-ssh RPI=pi@<rpi-ip>
-
-# View live logs
-make logs-ssh RPI=pi@<rpi-ip>
-
-# Quick update (code change, no full reinstall)
-make update-ssh RPI=pi@<rpi-ip>
-
-# Restart services
-make restart-ssh RPI=pi@<rpi-ip>
-
-# Full redeploy
-make deploy-ssh RPI=pi@<rpi-ip>
+ssh pi@wifry.local "test -f /opt/wifry/frontend/dist/index.html && echo frontend-ok"
 ```
 
-### On the RPi
+## Access Paths
+
+### WiFi AP
+
+- SSID default: `WiFry`
+- Password default: `wifry1234`
+- UI: [http://192.168.4.1:8080](http://192.168.4.1:8080)
+
+### Ethernet
+
+- UI: [http://<rpi-ip>:8080](http://<rpi-ip>:8080)
+- API docs: [http://<rpi-ip>:8080/docs](http://<rpi-ip>:8080/docs)
+
+### Recovery fallback
+
+- Direct Ethernet recovery IP: [http://169.254.42.1:8080](http://169.254.42.1:8080)
+- Physical console: `Alt+F2`
+
+## First-Run Operator Flow
+
+Once the box is reachable, use this order in the UI:
+
+1. `System > Network Config` to set WiFi AP, Ethernet uplink, and any reusable boot profile
+2. `Sessions` to create a session before collecting captures or device artifacts
+3. `Session detail > Generate Bundle` or `Bundle + Share` to hand off STB/test evidence
+
+Experimental surfaces:
+
+- `System > Remote Access` for Cloudflare tunnel and collaboration
+- Scenario APIs for automation only
+
+## Day-to-Day Commands
+
+### Local development
 
 ```bash
-# Backend logs
-journalctl -u wifry-backend -f
+make dev
+make backend
+make frontend
+```
 
-# Frontend logs
-journalctl -u wifry-frontend -f
+### Remote box management
 
-# All WiFry logs
-journalctl -u wifry-backend -u wifry-frontend -u hostapd -u dnsmasq -f
+```bash
+make status-ssh RPI=pi@wifry.local
+make logs-ssh RPI=pi@wifry.local
+make update-ssh RPI=pi@wifry.local
+make restart-ssh RPI=pi@wifry.local
+make verify-ssh RPI=pi@wifry.local
+```
 
-# Restart everything
-sudo systemctl restart wifry-backend wifry-frontend hostapd dnsmasq
+### Directly on the Pi
 
-# Recovery console
+```bash
+sudo systemctl status wifry-backend hostapd dnsmasq --no-pager
+sudo journalctl -u wifry-backend -u hostapd -u dnsmasq -f
 sudo /opt/wifry/setup/wifry-recovery.sh
 ```
 
-### Default Credentials
-| Service | Credential |
-|---------|-----------|
-| WiFi SSID | `WiFry` |
-| WiFi Password | `wifry1234` |
-| Web UI | No password (set one in Settings > App Settings) |
-| SSH | Whatever you configured during OS flash |
+## Files and Paths on the Pi
 
----
+```text
+/opt/wifry/
+  backend/                     FastAPI app and Python environment
+  frontend/dist/               Built frontend served by FastAPI
+  setup/                       Install scripts, systemd units, recovery tools
+  VERSION                      Current installed version tag/string
 
-## Architecture on the RPi
-
-```
-/opt/wifry/                    # Application code
-  ├── backend/                 # Python FastAPI + uvicorn
-  │   ├── .venv/               # Python virtual environment
-  │   └── app/                 # Application code
-  ├── frontend/
-  │   └── dist/                # Built React app (served by Python http.server)
-  └── setup/                   # Install scripts, systemd units, recovery
-
-/var/lib/wifry/                # Runtime data (survives updates)
-  ├── captures/                # Packet capture .pcap files
-  ├── logs/                    # Structured logs, audit JSONL, operator diagnostics
-  ├── sessions/                # Session metadata + artifacts
-  ├── scenarios/               # Saved scenario definitions
-  ├── reports/                 # Generated HTML reports
-  ├── bundles/                 # Support bundle .zip files
-  ├── adb-files/               # ADB screenshots, bugreports
-  ├── coredns/                 # CoreDNS Corefile + hosts
-  ├── teleport/                # VPN profiles
-  ├── network-profiles/        # Saved network configurations
-  ├── settings.json            # App settings
-  ├── network_config.json      # WiFi AP + Ethernet config
-  └── feature_flags.json       # Feature flag overrides
-
-/etc/hostapd/hostapd.conf      # WiFi AP config
-/etc/dnsmasq.d/wifry.conf      # DHCP + DNS config
-/etc/sudoers.d/wifry            # Permissions for wifry user
+/var/lib/wifry/
+  captures/                    Packet captures
+  sessions/                    Session metadata and artifacts
+  bundles/                     Generated session bundles
+  reports/                     Generated reports
+  adb-files/                   Screenshots, bugreports, and similar artifacts
+  network-profiles/            Saved network configuration profiles
+  scenarios/                   Saved scenario definitions
+  logs/                        Audit log and related diagnostics
+  settings.json                App settings
+  network_config.json          Applied network configuration
+  feature_flags.json           Feature overrides
 ```
 
-### Systemd Services
-| Service | Port | Purpose |
-|---------|------|---------|
-| `wifry-backend` | 8080 | FastAPI REST API |
-| `wifry-frontend` | 3000 | React web UI (http.server) |
-| `wifry-recovery` | tty2 | Physical recovery console |
-| `hostapd` | — | WiFi access point |
-| `dnsmasq` | 53 | DHCP + DNS |
+## System Services
 
----
+| Service | Purpose | Port |
+|---------|---------|------|
+| `wifry-backend` | FastAPI API plus built frontend | `8080` |
+| `wifry-recovery` | Recovery console on `tty2` | n/a |
+| `hostapd` | WiFi AP | n/a |
+| `dnsmasq` | DHCP and DNS for the AP | `53` |
+
+There is no separate `wifry-frontend` production service in the current repo state.
 
 ## Troubleshooting
 
-### WiFi AP not starting
-```bash
-# Check hostapd status
-sudo systemctl status hostapd
-sudo journalctl -u hostapd -n 50
+### UI does not load
 
-# Common fix: unmask hostapd
-sudo systemctl unmask hostapd
-sudo systemctl restart hostapd
+```bash
+ssh pi@wifry.local "sudo systemctl status wifry-backend --no-pager"
+ssh pi@wifry.local "curl -sf http://localhost:8080/api/v1/health"
+ssh pi@wifry.local "sudo journalctl -u wifry-backend -n 100 --no-pager"
 ```
 
-### Can't reach Web UI
-1. Try the fallback IP: http://169.254.42.1:8080
-2. Or use recovery console (Alt+F2)
-3. Check if backend is running: `systemctl status wifry-backend`
+### WiFi AP is down
 
-### STB can't connect to WiFi
-1. Check hostapd is running: `systemctl status hostapd`
-2. Check the WiFi interface is up: `ip link show wlan0`
-3. Check DHCP: `journalctl -u dnsmasq -n 20`
-
-### Backend crashes on startup
 ```bash
-# Check the error
-journalctl -u wifry-backend -n 50
-
-# Common fix: recreate venv
-sudo rm -rf /opt/wifry/backend/.venv
-sudo -u wifry python3 -m venv /opt/wifry/backend/.venv
-sudo -u wifry /opt/wifry/backend/.venv/bin/pip install -r /opt/wifry/backend/requirements.txt
-sudo systemctl restart wifry-backend
+ssh pi@wifry.local "sudo systemctl status hostapd dnsmasq --no-pager"
+ssh pi@wifry.local "sudo journalctl -u hostapd -u dnsmasq -n 100 --no-pager"
+ssh pi@wifry.local "ip addr show wlan0"
 ```
 
-### Correlate an operator action to backend logs
+### Box is reachable only over direct Ethernet
+
+Use [http://169.254.42.1:8080](http://169.254.42.1:8080) or run the recovery console:
+
 ```bash
-# Any API response includes X-Request-ID
-curl -i http://wifry.local:8080/api/v1/system/info
-
-# Follow structured backend logs and search for the same request_id
-sudo journalctl -u wifry-backend -n 100 --no-pager
-
-# Read recent audit events directly from the API
-curl http://wifry.local:8080/api/v1/system/audit | jq .
+ssh pi@wifry.local "sudo /opt/wifry/setup/wifry-recovery.sh"
 ```
 
-### Support bundle diagnostics
-Support bundles now include:
+### Need a production image
 
-- `diagnostics/bundle_diagnostics.json`
-
-Use those files when a bundle reaches engineering and you need to answer:
-
-- which request triggered the bundle
-- which artifact files were missing at bundle time
-
-Session bundles remain focused on the STB/test run. They do not include appliance-wide audit history or WiFry operator logs.
-
-For WiFry appliance diagnostics, use:
-
-- `curl http://wifry.local:8080/api/v1/system/audit | jq .`
-- `sudo journalctl -u wifry-backend -n 100 --no-pager`
-
-### Factory reset (keep code, wipe data)
-```bash
-sudo rm -rf /var/lib/wifry/*
-sudo systemctl restart wifry-backend wifry-frontend
-```
-
-### Complete reinstall
-```bash
-make deploy-ssh RPI=pi@<rpi-ip>
-```
+Image builds are driven from tags and the GitHub Actions workflow in `.github/workflows/build-image.yml`. Before trusting a given image in the field, verify the release notes and do a real-box boot test for that tag.

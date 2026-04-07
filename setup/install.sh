@@ -343,12 +343,10 @@ step "Installing system services"
 install -m 0644 "$INSTALL_DIR/setup/wifry-motd.sh" /etc/profile.d/wifry-motd.sh
 
 cp "$INSTALL_DIR/setup/wifry-backend.service" /etc/systemd/system/
-cp "$INSTALL_DIR/setup/wifry-frontend.service" /etc/systemd/system/
 cp "$INSTALL_DIR/setup/wifry-recovery.service" /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable wifry-backend.service
-systemctl enable wifry-frontend.service
 systemctl enable wifry-recovery.service
 systemctl enable hostapd.service
 systemctl enable dnsmasq.service
@@ -362,7 +360,6 @@ sleep 2
 systemctl restart hostapd
 systemctl restart dnsmasq
 systemctl start wifry-backend
-systemctl start wifry-frontend
 
 # Wait for backend to be ready
 info "Waiting for backend to start..."
@@ -391,7 +388,7 @@ check() {
 }
 
 check "Backend API responding" "curl -sf http://localhost:8080/api/v1/health"
-check "Frontend built" "test -f $INSTALL_DIR/frontend/dist/index.html"
+check "Frontend bundle present" "test -f $INSTALL_DIR/frontend/dist/index.html"
 check "hostapd running" "systemctl is-active hostapd"
 check "dnsmasq running" "systemctl is-active dnsmasq"
 check "WiFi AP IP set" "ip addr show $WLAN_IFACE | grep -q '192.168.4.1'"
@@ -436,8 +433,7 @@ info "    Script:     sudo /opt/wifry/setup/wifry-recovery.sh"
 echo ""
 info "  ${BOLD}Services${NC}"
 info "    Backend:    systemctl status wifry-backend"
-info "    Frontend:   systemctl status wifry-frontend"
-info "    Logs:       journalctl -u wifry-backend -f"
+info "    Logs:       journalctl -u wifry-backend -u hostapd -u dnsmasq -f"
 echo ""
 
 if [[ $FAIL -gt 0 ]]; then
