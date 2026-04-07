@@ -174,10 +174,11 @@ export default function NetworkConfigPanel() {
           <div>
             <label className="mb-1 block text-xs text-gray-500">Channel Width</label>
             <select value={ap.channel_width || 20} onChange={e => setAp({...ap, channel_width: parseInt(e.target.value)})}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white">
+              className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              title="Wider channels = faster speeds. 80 MHz may require USB WiFi adapter.">
               <option value={20}>20 MHz</option>
               <option value={40}>40 MHz (HT40)</option>
-              {ap.band === '5GHz' && <option value={80}>80 MHz (VHT80)</option>}
+              {ap.band === '5GHz' && <option value={80}>80 MHz (VHT80 — may need USB adapter)</option>}
             </select>
           </div>
           <Input label="Channel" value={ap.channel} onChange={v => setAp({...ap, channel: parseInt(v) || 0})} type="number" title="0 = auto, 1-11 for 2.4GHz, 36-165 for 5GHz" />
