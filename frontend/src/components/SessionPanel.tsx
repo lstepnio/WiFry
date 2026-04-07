@@ -182,7 +182,25 @@ export default function SessionPanel() {
               {detail.tags.map(t => <span key={t} className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-700 dark:bg-blue-900 dark:text-blue-300">{t}</span>)}
             </div>
           )}
-          {detail.notes && <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{detail.notes}</p>}
+          {/* Editable notes */}
+          <div className="mt-3">
+            <textarea
+              value={detail.notes || ''}
+              onChange={async (e) => {
+                const newNotes = e.target.value;
+                setDetail({ ...detail, notes: newNotes });
+              }}
+              onBlur={async () => {
+                await fetch(`/api/v1/sessions/${detail.id}/notes`, {
+                  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ notes: detail.notes }),
+                });
+              }}
+              placeholder="Add session notes..."
+              rows={2}
+              className="w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-300 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
           {detail.description && <p className="mt-1 text-xs text-gray-500">{detail.description}</p>}
 
           <div className={`mt-4 rounded-lg border p-3 text-xs ${bundleSharingEnabled ? 'border-green-700 bg-green-950/30 text-green-200' : 'border-yellow-700 bg-yellow-950/30 text-yellow-200'}`}>
@@ -191,9 +209,18 @@ export default function SessionPanel() {
               : 'Session bundle sharing is disabled right now. You can still generate a local bundle from this session.'}
           </div>
 
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             {detail.status === 'active' && (
-              <button onClick={() => completeSession(detail.id)} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Complete Session</button>
+              <>
+                <button onClick={() => completeSession(detail.id)} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Complete Session</button>
+                <button onClick={async () => {
+                  await fetch('/api/v1/sessions/deactivate', { method: 'POST' });
+                  refreshActive();
+                }} className="rounded border border-yellow-500 px-3 py-1.5 text-xs font-medium text-yellow-500 hover:bg-yellow-950"
+                  title="Stop auto-linking artifacts without completing the session">
+                  Pause Recording
+                </button>
+              </>
             )}
             <button onClick={() => generateBundle(detail.id)} className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700">Generate Bundle</button>
             {bundleSharingEnabled && (

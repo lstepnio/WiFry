@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import type { CaptureFilters, CaptureInfo } from '../types';
 import * as api from '../api/client';
 import { useApi } from '../hooks/useApi';
+import SessionBadge from './SessionBadge';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -95,7 +96,10 @@ export default function CaptureManager({
     <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Packet Captures</h2>
+          <div className="mb-1 flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Packet Captures</h2>
+            <SessionBadge />
+          </div>
           <p className="text-xs text-gray-500">Capture network traffic with tshark. Use filters to scope captures. Click Analyze to run AI-powered analysis on completed captures.</p>
         </div>
         <div className="flex gap-2">
