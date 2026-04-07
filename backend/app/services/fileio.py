@@ -25,7 +25,7 @@ from ..services import storage
 
 logger = logging.getLogger(__name__)
 
-FILEIO_API = "https://file.io"
+FILEIO_API = "https://www.file.io"
 
 # History of uploads
 _upload_history: List[dict] = []
@@ -54,7 +54,7 @@ async def upload_file(
         return result
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
             with open(p, "rb") as f:
                 resp = await client.post(
                     FILEIO_API,
@@ -115,7 +115,7 @@ async def upload_bundle(
         return result
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
             resp = await client.post(
                 FILEIO_API,
                 files={"file": (bundle_name, zip_buffer, "application/zip")},
