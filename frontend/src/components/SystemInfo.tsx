@@ -43,9 +43,23 @@ function RebootButton() {
   );
 }
 
+interface VersionInfo {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+}
+
 export default function SystemInfo() {
   const fetcher = useCallback(() => api.getSystemInfo(), []);
   const { data: info } = useApi<SystemInfoType>(fetcher, 10000);
+
+  const versionFetcher = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/system/version');
+      return res.ok ? res.json() : null;
+    } catch { return null; }
+  }, []);
+  const { data: version } = useApi<VersionInfo>(versionFetcher, 60000);
 
   if (!info) {
     return <div className="text-sm text-gray-500">Loading system info...</div>;
@@ -57,7 +71,21 @@ export default function SystemInfo() {
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-      <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">System</h2>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">System</h2>
+        <div className="flex items-center gap-2">
+          {version && (
+            <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
+              WiFry v{version.current_version}
+            </span>
+          )}
+          {version?.update_available && (
+            <span className="rounded bg-green-900 px-2 py-0.5 text-xs font-medium text-green-400">
+              {version.latest_version} available
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-4 text-sm">
         <div>

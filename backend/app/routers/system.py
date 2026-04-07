@@ -342,6 +342,13 @@ async def share_app_logs(lines: int = 500):
     return upload
 
 
+@router.get("/version")
+async def get_version():
+    """Get current version and check for updates."""
+    from ..services import updater
+    return await updater.check_updates()
+
+
 @router.get("/update/check")
 async def check_updates():
     """Check for available updates from git remote."""
@@ -349,9 +356,16 @@ async def check_updates():
     return await updater.check_updates()
 
 
+@router.post("/update/apply")
+async def apply_update(target_version: str = ""):
+    """Apply update to a specific version (or latest). Auto-restarts backend."""
+    from ..services import updater
+    return await updater.apply_update(target_version)
+
+
 @router.post("/update/pull")
 async def pull_update():
-    """Pull latest update from git and rebuild."""
+    """Legacy: Pull latest update from git and rebuild."""
     from ..services import updater
     return await updater.pull_update()
 

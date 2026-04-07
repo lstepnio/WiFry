@@ -80,10 +80,11 @@ async def test_update_check(client: AsyncClient):
     resp = await client.get("/api/v1/system/update/check")
     assert resp.status_code == 200
     data = resp.json()
-    # Mock mode returns update info
-    assert "current_commit" in data
-    assert "current_branch" in data
+    # Mock mode returns version info
+    assert "current_version" in data
+    assert "latest_version" in data
     assert "update_available" in data
+    assert "available_versions" in data
 
 
 # --- Logs ---

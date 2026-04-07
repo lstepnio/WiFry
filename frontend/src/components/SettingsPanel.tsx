@@ -68,14 +68,50 @@ export default function SettingsPanel() {
     setNewPw('');
   };
 
-  const forceUpdate = async () => {
-    setUpdating(true);
+  const [versionInfo, setVersionInfo] = useState<{current_version: string; latest_version: string | null; update_available: boolean; available_versions: string[]} | null>(null);
+  const [updateSteps, setUpdateSteps] = useState<string[]>([]);
+
+  const checkForUpdates = async () => {
     try {
-      const res = await fetch('/api/v1/system/settings/force-update', { method: 'POST' });
+      const res = await fetch('/api/v1/system/version');
+      if (res.ok) setVersionInfo(await res.json());
+    } catch {}
+  };
+
+  const applyUpdate = async (version: string = '') => {
+    setUpdating(true);
+    setUpdateSteps([]);
+    setMessage('');
+    try {
+      const params = version ? `?target_version=${version}` : '';
+      const res = await fetch(`/api/v1/system/update/apply${params}`, { method: 'POST' });
       const data = await res.json();
-      setMessage(data.message || JSON.stringify(data));
-    } catch { setMessage('Update failed'); }
-    finally { setUpdating(false); }
+      setUpdateSteps(data.steps || []);
+      if (data.status === 'ok') {
+        setMessage('Update complete. Restarting...');
+        // Poll for backend to come back
+        setTimeout(async () => {
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const health = await fetch('/api/v1/health');
+              if (health.ok) {
+                window.location.reload();
+                return;
+              }
+            } catch {}
+          }
+          setMessage('Backend did not come back. Check the device.');
+          setUpdating(false);
+        }, 3000);
+      } else {
+        setMessage(data.message || 'Update failed');
+        setUpdating(false);
+      }
+    } catch {
+      setMessage('Update request failed');
+      setUpdating(false);
+    }
   };
 
   if (!settings) return null;
@@ -122,20 +158,43 @@ export default function SettingsPanel() {
           </div>
         </div>
 
-        {/* Git / Updates */}
+        {/* Updates */}
         <div>
-          <h3 className="mb-2 text-sm font-medium text-gray-500 dark:text-gray-400">Updates</h3>
-          <div className="space-y-2">
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Git Repository URL</label>
-              <input value={gitRepo} onChange={(e) => setGitRepo(e.target.value)}
-                placeholder="https://github.com/org/WiFry.git"
-                className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 font-mono text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
+          <h3 className="mb-2 text-sm font-medium text-gray-500 dark:text-gray-400">Software Updates</h3>
+          <div className="space-y-3">
+            {versionInfo && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-gray-400">Current: <span className="font-medium text-white">v{versionInfo.current_version}</span></span>
+                {versionInfo.update_available && versionInfo.latest_version && (
+                  <span className="rounded bg-green-900 px-2 py-0.5 text-xs font-medium text-green-400">
+                    {versionInfo.latest_version} available
+                  </span>
+                )}
+                {!versionInfo.update_available && (
+                  <span className="text-xs text-gray-600">Up to date</span>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={checkForUpdates} disabled={updating}
+                className="rounded-lg border border-gray-600 px-4 py-1.5 text-sm font-medium text-gray-400 hover:bg-gray-800 disabled:opacity-50">
+                Check for Updates
+              </button>
+              {versionInfo?.update_available && versionInfo.latest_version && (
+                <button onClick={() => applyUpdate(versionInfo.latest_version!)} disabled={updating}
+                  className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                  {updating ? 'Updating...' : `Update to ${versionInfo.latest_version}`}
+                </button>
+              )}
             </div>
-            <button onClick={forceUpdate} disabled={updating}
-              className="rounded-lg bg-orange-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50">
-              {updating ? 'Updating...' : 'Force Update'}
-            </button>
+            {updateSteps.length > 0 && (
+              <div className="rounded border border-gray-700 bg-gray-800 p-3">
+                <div className="mb-1 text-xs font-medium text-gray-400">Update Progress</div>
+                {updateSteps.map((step, i) => (
+                  <div key={i} className="font-mono text-xs text-gray-500">{step}</div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

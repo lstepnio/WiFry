@@ -360,6 +360,14 @@ sudo -u wifry python3 -m venv /opt/wifry/backend/.venv
 sudo -u wifry /opt/wifry/backend/.venv/bin/pip install --upgrade pip -q
 sudo -u wifry /opt/wifry/backend/.venv/bin/pip install -r /opt/wifry/backend/requirements.txt -q
 
+# Bootstrap git repo for self-updates
+echo "Setting up git repo for self-updates..."
+cd /opt/wifry
+sudo -u wifry git init
+sudo -u wifry git remote add origin https://github.com/lstepnio/WiFry.git
+sudo -u wifry git fetch --tags --depth=1 2>/dev/null || true
+cd /
+
 # Set up NAT/iptables
 echo "Configuring NAT..."
 iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
