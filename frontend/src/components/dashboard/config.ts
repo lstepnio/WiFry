@@ -1,4 +1,4 @@
-export type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'system';
+export type Tab = 'sessions' | 'impairments' | 'adb' | 'captures' | 'streams' | 'stb_automation' | 'system';
 export type LegacyTab = Tab | 'sharing';
 export type ImpairmentSubTab = 'profiles' | 'network' | 'wifi' | 'dns' | 'teleport';
 export type SystemSubTab = 'overview' | 'network' | 'remote' | 'tools' | 'settings';
@@ -25,6 +25,7 @@ export const TABS: DashboardTabOption<Tab>[] = [
   { id: 'adb', label: 'ADB', desc: 'Android device control' },
   { id: 'captures', label: 'Captures', desc: 'Packet capture + AI analysis' },
   { id: 'streams', label: 'Streams', desc: 'HLS/DASH stream monitoring' },
+  { id: 'stb_automation', label: 'STB', desc: 'Set-top box test automation and control' },
   { id: 'system', label: 'System', desc: 'Network setup, remote access, and admin tools' },
 ];
 
@@ -78,6 +79,7 @@ export function getVisibleTabs(isEnabled: FeatureFlagChecker): DashboardTabOptio
     if (tab.id === 'streams' && !isEnabled('streams')) return false;
     if (tab.id === 'adb' && !isEnabled('adb')) return false;
     if (tab.id === 'captures' && !isEnabled('captures')) return false;
+    if (tab.id === 'stb_automation' && !isEnabled('stb_automation')) return false;
     return true;
   });
 }

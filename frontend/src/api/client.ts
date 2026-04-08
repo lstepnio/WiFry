@@ -410,3 +410,143 @@ export async function stbNavigate(serial: string, action: string, settleTimeoutM
     body: JSON.stringify({ serial, action, settle_timeout_ms: settleTimeoutMs }),
   });
 }
+
+// STB_AUTOMATION — Crawl + navigation model endpoints
+export async function startStbCrawl(config: { serial: string; max_depth?: number; max_transitions?: number; settle_timeout_ms?: number; explore_actions?: string[] }): Promise<import('../types').StbCrawlStatus> {
+  return request('/experimental/stb/crawl/start', { method: 'POST', body: JSON.stringify(config) });
+}
+
+export async function stopStbCrawl(): Promise<import('../types').StbCrawlStatus> {
+  return request('/experimental/stb/crawl/stop', { method: 'POST' });
+}
+
+export async function stbCrawlStep(config: { serial: string; explore_actions?: string[] }): Promise<Record<string, unknown>> {
+  return request('/experimental/stb/crawl/step', { method: 'POST', body: JSON.stringify(config) });
+}
+
+export async function getStbModel(deviceId: string): Promise<import('../types').StbNavigationModel> {
+  return request(`/experimental/stb/model?device_id=${encodeURIComponent(deviceId)}`);
+}
+
+export async function getStbModelNode(deviceId: string, nodeId: string): Promise<import('../types').StbScreenNode> {
+  return request(`/experimental/stb/model/${nodeId}?device_id=${encodeURIComponent(deviceId)}`);
+}
+
+export async function findStbPath(deviceId: string, fromNode: string, toNode: string): Promise<import('../types').StbPathResponse> {
+  return request('/experimental/stb/model/path', { method: 'POST', body: JSON.stringify({ device_id: deviceId, from_node: fromNode, to_node: toNode }) });
+}
+
+export async function deleteStbModel(deviceId: string): Promise<{ deleted: boolean; device_id: string }> {
+  return request(`/experimental/stb/model?device_id=${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
+}
+
+// STB_AUTOMATION — Anomaly detection endpoints
+export async function getStbAnomalies(lastN: number = 50): Promise<import('../types').StbDetectedAnomaly[]> {
+  return request(`/experimental/stb/anomalies?last_n=${lastN}`);
+}
+
+export async function getStbAnomalyPatterns(): Promise<import('../types').StbAnomalyPattern[]> {
+  return request('/experimental/stb/anomalies/patterns');
+}
+
+export async function setStbAnomalyPatterns(patterns: import('../types').StbAnomalyPattern[]): Promise<import('../types').StbAnomalyPattern[]> {
+  return request('/experimental/stb/anomalies/patterns', {
+    method: 'PUT',
+    body: JSON.stringify(patterns),
+  });
+}
+
+export async function collectStbDiagnostics(serial: string, reason: string = 'manual', severity: string = 'medium'): Promise<import('../types').StbDiagnosticsResult> {
+  return request('/experimental/stb/diagnostics/collect', {
+    method: 'POST',
+    body: JSON.stringify({ serial, reason, severity }),
+  });
+}
+
+// STB_AUTOMATION — Test flow endpoints
+export async function listStbFlows(): Promise<import('../types').StbTestFlow[]> {
+  return request('/experimental/stb/flows');
+}
+
+export async function getStbFlow(flowId: string): Promise<import('../types').StbTestFlow> {
+  return request(`/experimental/stb/flows/${flowId}`);
+}
+
+export async function createStbFlow(params: { name: string; serial: string; description?: string; steps?: import('../types').StbTestStep[]; source?: string }): Promise<import('../types').StbTestFlow> {
+  return request('/experimental/stb/flows', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function updateStbFlow(flowId: string, updates: { name?: string; description?: string; serial?: string; steps?: import('../types').StbTestStep[] }): Promise<import('../types').StbTestFlow> {
+  return request(`/experimental/stb/flows/${flowId}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteStbFlow(flowId: string): Promise<{ deleted: boolean; flow_id: string }> {
+  return request(`/experimental/stb/flows/${flowId}`, { method: 'DELETE' });
+}
+
+export async function runStbFlow(flowId: string): Promise<import('../types').StbTestFlowRun> {
+  return request(`/experimental/stb/flows/${flowId}/run`, { method: 'POST' });
+}
+
+export async function stopStbFlow(flowId: string): Promise<Record<string, unknown>> {
+  return request(`/experimental/stb/flows/${flowId}/stop`, { method: 'POST' });
+}
+
+export async function getStbFlowResults(flowId: string): Promise<import('../types').StbTestFlowRun> {
+  return request(`/experimental/stb/flows/${flowId}/results`);
+}
+
+export async function startStbRecording(name: string, serial: string, description: string = ''): Promise<import('../types').StbTestFlow> {
+  return request('/experimental/stb/flows/record/start', {
+    method: 'POST',
+    body: JSON.stringify({ name, serial, description }),
+  });
+}
+
+export async function stopStbRecording(): Promise<Record<string, unknown>> {
+  return request('/experimental/stb/flows/record/stop', { method: 'POST' });
+}
+
+// STB_AUTOMATION — Chaos mode endpoints
+export async function startStbChaos(config: import('../types').StbChaosConfig): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/start', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function stopStbChaos(): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/stop', { method: 'POST' });
+}
+
+export async function getStbChaosStatus(): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/status');
+}
+
+// STB_AUTOMATION — Natural language test generation endpoints
+export async function generateStbFlow(params: import('../types').StbNLGenerateRequest): Promise<import('../types').StbTestFlow> {
+  return request('/experimental/stb/nl/generate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function refineStbFlow(flowId: string, params: import('../types').StbNLRefineRequest): Promise<import('../types').StbTestFlow> {
+  return request(`/experimental/stb/nl/refine/${flowId}`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+// STB_AUTOMATION — Vision enrichment endpoint
+export async function enrichStbState(serial: string): Promise<import('../types').StbVisionEnrichment> {
+  return request(`/experimental/stb/state/enrich?serial=${encodeURIComponent(serial)}`, {
+    method: 'POST',
+  });
+}

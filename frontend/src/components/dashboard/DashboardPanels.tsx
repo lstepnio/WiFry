@@ -18,6 +18,7 @@ import StreamMonitor from '../StreamMonitor';
 import SystemInfo from '../SystemInfo';
 import TeleportPanel from '../TeleportPanel';
 import ExperimentalVideoStream from '../ExperimentalVideoStream'; // EXPERIMENTAL_VIDEO_CAPTURE
+import StbAutomationPanel from '../StbAutomationPanel'; // STB_AUTOMATION
 import VideoProbe from '../VideoProbe';
 import WifiImpairmentPanel from '../WifiImpairmentPanel';
 import WifiScanner from '../WifiScanner';
@@ -78,6 +79,10 @@ export default function DashboardPanels({
 
   if (currentTab === 'adb') {
     return isEnabled('adb') ? <AdbPanel /> : null;
+  }
+
+  if (currentTab === 'stb_automation') {
+    return isEnabled('stb_automation') ? <StbAutomationPanel /> : null;
   }
 
   if (currentTab === 'captures') {

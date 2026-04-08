@@ -662,3 +662,156 @@ export interface StbNavigateResponse {
   settle_method: string;
   settle_ms: number;
 }
+
+export interface StbTransitionEdge {
+  from_node: string;
+  to_node: string;
+  action: string;
+  success_count: number;
+  no_effect_count: number;
+  avg_transition_ms: number;
+  settle_method: string;
+}
+
+export interface StbScreenNode {
+  id: string;
+  fingerprint: string;
+  screen_type: string;
+  title: string;
+  package: string;
+  activity: string;
+  elements: StbUIElement[];
+  vision_analysis: Record<string, unknown> | null;
+  visit_count: number;
+  last_visited: string;
+}
+
+export interface StbNavigationModel {
+  device_id: string;
+  device_model: string;
+  created_at: string;
+  updated_at: string;
+  home_node_id: string;
+  nodes: Record<string, StbScreenNode>;
+  edges: StbTransitionEdge[];
+}
+
+export interface StbPathResponse {
+  found: boolean;
+  actions: string[];
+  hop_count: number;
+}
+
+export interface StbAnomalyPattern {
+  name: string;
+  pattern: string;
+  tags: string[];
+  severity: string;
+  category: string;
+}
+
+export interface StbDetectedAnomaly {
+  pattern_name: string;
+  severity: string;
+  category: string;
+  timestamp: string;
+  logcat_line: StbLogcatEvent | null;
+  vision_state: string | null;
+  context_lines: string[];
+  diagnostics_collected: boolean;
+  artifact_ids: string[];
+}
+
+export interface StbDiagnosticsResult {
+  collected_at: string;
+  reason: string;
+  severity: string;
+  artifacts: string[];
+  screenshot?: string;
+  bugreport?: string;
+  screenshot_error?: string;
+  bugreport_error?: string;
+}
+
+export interface StbTestStep {
+  action: string;
+  expected_screen_id: string | null;
+  expected_activity: string | null;
+  wait_ms: number;
+  description: string;
+  collect_diagnostics: boolean;
+}
+
+export interface StbTestFlow {
+  id: string;
+  name: string;
+  description: string;
+  serial: string;
+  steps: StbTestStep[];
+  created_at: string;
+  updated_at: string;
+  source: string;
+}
+
+export interface StbTestFlowRun {
+  flow_id: string;
+  state: string;
+  current_step: number;
+  steps_passed: number;
+  steps_failed: number;
+  anomalies_detected: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}
+
+export interface StbChaosConfig {
+  serial: string;
+  duration_secs?: number;
+  seed?: number | null;
+  key_weights?: Record<string, number>;
+  on_anomaly?: string;
+  enable_vision_checks?: boolean;
+  vision_check_interval_secs?: number;
+}
+
+export interface StbChaosResult {
+  state: string;
+  duration_secs: number;
+  keys_sent: number;
+  screens_visited: number;
+  anomalies: StbDetectedAnomaly[];
+  seed_used: number;
+}
+
+export interface StbNLGenerateRequest {
+  prompt: string;
+  serial: string;
+  device_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface StbNLRefineRequest {
+  refinement: string;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface StbVisionEnrichment {
+  enriched: boolean;
+  error?: string;
+  screen_type?: string;
+  screen_title?: string | null;
+  focused_element?: {
+    element_type: string;
+    label: string;
+    position: string;
+    confidence: string;
+  } | null;
+  navigation_path?: string[] | null;
+  visible_text_summary?: string;
+  provider?: string;
+  model?: string;
+  tokens_used?: number;
+}
