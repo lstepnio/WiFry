@@ -498,11 +498,18 @@ async def _post_process(capture_id: str) -> None:
         asyncio.create_task(capture_retention.enforce_retention())
 
     except Exception as e:
-        logger.error("Post-processing failed for capture %s: %s", capture_id, e)
+        # TimeoutError and CancelledError have empty str() in Python 3.11
+        err_name = type(e).__name__
+        err_detail = str(e) or "(no detail)"
+        logger.error(
+            "Post-processing failed for capture %s: %s: %s",
+            capture_id, err_name, err_detail,
+        )
         # Restore to completed status even if post-processing failed
         info = _captures.get(capture_id)
         if info and info.status == CaptureStatus.PROCESSING:
             info.status = CaptureStatus.COMPLETED
+            info.error = f"Summary generation failed: {err_name}"
             _captures[capture_id] = info
             _save_metadata(info)
 

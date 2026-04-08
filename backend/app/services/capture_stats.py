@@ -6,9 +6,10 @@ RPi 5 friendliness.
 
 Design principles from rpi5-performance-guide.md:
 - nice -n 10 / ionice -c2 -n7 on all post-processing
-- Per-query timeout 60 s, total pipeline timeout 5 min
+- Adaptive per-query timeout: 60s base, scales with file size
 - Sequential execution (one tshark at a time) to avoid RAM spikes
-- Page cache pre-warming: cat pcap > /dev/null before queries
+- Page cache pre-warming: limited to <100 MB pcaps
+- Minimised tshark passes: TCP health in single pass (not 8)
 """
 
 import asyncio
@@ -49,14 +50,48 @@ logger = logging.getLogger(__name__)
 
 # Resource control: only one post-processing pipeline at a time
 _post_process_semaphore = asyncio.Semaphore(1)
-_QUERY_TIMEOUT = 60  # seconds per tshark query
-_PIPELINE_TIMEOUT = 300  # total pipeline timeout
+_QUERY_TIMEOUT_BASE = 60  # seconds per tshark query (base)
+_PIPELINE_TIMEOUT_BASE = 300  # total pipeline timeout (base)
+_PREWARM_MAX_MB = 100  # skip page-cache prewarm above this size
 
 
-async def _tshark_query(pcap_path: str, *args: str, timeout: float = _QUERY_TIMEOUT) -> CommandResult:
+def _adaptive_timeout(pcap_path: str, base: float = _QUERY_TIMEOUT_BASE) -> float:
+    """Scale tshark timeout based on pcap file size.
+
+    RPi 5 processes ~7 MB/s for stat queries and ~3 MB/s for field
+    extraction.  For a 400 MB pcap, 60 s is nowhere near enough.
+    """
+    try:
+        size_mb = Path(pcap_path).stat().st_size / (1024 * 1024)
+        if size_mb > 200:
+            return max(base, size_mb * 1.5)  # ~1.5 s per MB for very large
+        elif size_mb > 50:
+            return max(base, size_mb * 1.0)  # ~1 s per MB for large
+        return base
+    except OSError:
+        return base
+
+
+def _pipeline_timeout(pcap_path: str) -> float:
+    """Scale total pipeline timeout based on pcap size."""
+    try:
+        size_mb = Path(pcap_path).stat().st_size / (1024 * 1024)
+        if size_mb > 200:
+            return max(_PIPELINE_TIMEOUT_BASE, size_mb * 10)  # ~10 s/MB
+        elif size_mb > 50:
+            return max(_PIPELINE_TIMEOUT_BASE, size_mb * 6)
+        return _PIPELINE_TIMEOUT_BASE
+    except OSError:
+        return _PIPELINE_TIMEOUT_BASE
+
+
+async def _tshark_query(pcap_path: str, *args: str, timeout: float = 0) -> CommandResult:
     """Run a tshark query with nice/ionice resource controls."""
     if settings.mock_mode:
         return CommandResult(returncode=0, stdout="", stderr="")
+
+    if timeout <= 0:
+        timeout = _adaptive_timeout(pcap_path)
 
     # Use nice + ionice for lower priority on RPi
     cmd_args = [
@@ -69,11 +104,19 @@ async def _tshark_query(pcap_path: str, *args: str, timeout: float = _QUERY_TIME
 
 
 async def _prewarm_cache(pcap_path: str) -> None:
-    """Pre-warm page cache to avoid random I/O during queries."""
+    """Pre-warm page cache to avoid random I/O during queries.
+
+    Skipped for files > _PREWARM_MAX_MB — catting a 400 MB pcap wastes
+    too much time and pushes useful pages out of cache on the RPi.
+    """
     if settings.mock_mode:
         return
     try:
-        await run("cat", pcap_path, check=False, timeout=30)
+        size_mb = Path(pcap_path).stat().st_size / (1024 * 1024)
+        if size_mb > _PREWARM_MAX_MB:
+            logger.info("Skipping prewarm for large pcap (%.0f MB)", size_mb)
+            return
+        await run("cat", pcap_path, check=False, timeout=60)
     except Exception:
         pass  # Non-critical
 
@@ -97,10 +140,17 @@ async def generate_summary(
         logger.warning("Pcap file not found: %s", pcap_path)
         return CaptureSummary(meta=meta or CaptureMeta(capture_id=capture_id, pack=pack))
 
+    timeout = _pipeline_timeout(pcap_path)
+    logger.info(
+        "Starting summary pipeline for %s (%.1f MB, timeout=%ds)",
+        capture_id,
+        pcap.stat().st_size / (1024 * 1024),
+        timeout,
+    )
     async with _post_process_semaphore:
         return await asyncio.wait_for(
             _run_pipeline(capture_id, pcap_path, pack, meta),
-            timeout=_PIPELINE_TIMEOUT,
+            timeout=timeout,
         )
 
 
@@ -221,48 +271,52 @@ async def _extract_protocol_hierarchy(pcap_path: str) -> ProtocolBreakdown:
 
 
 async def _extract_tcp_health(pcap_path: str) -> TcpHealth:
-    """Extract TCP health metrics via tshark expert info and field extraction."""
+    """Extract TCP health metrics in a SINGLE tshark pass.
+
+    Previous implementation ran 8 separate tshark passes, each scanning
+    the entire pcap.  For a 400 MB file on RPi that took 8+ minutes.
+    This version extracts all TCP analysis flags in one pass.
+    """
     health = TcpHealth()
 
-    # Count total TCP segments
-    result = await _tshark_query(pcap_path, "-Y", "tcp", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.total_segments = len(result.stdout.strip().splitlines())
+    # Single pass: extract all TCP frames with analysis flags
+    result = await _tshark_query(
+        pcap_path,
+        "-Y", "tcp",
+        "-T", "fields",
+        "-e", "frame.number",
+        "-e", "tcp.analysis.retransmission",
+        "-e", "tcp.analysis.fast_retransmission",
+        "-e", "tcp.analysis.duplicate_ack",
+        "-e", "tcp.analysis.zero_window",
+        "-e", "tcp.flags.reset",
+        "-e", "tcp.analysis.out_of_order",
+        "-e", "tcp.analysis.window_full",
+        "-E", "separator=|",
+    )
 
-    # Count retransmissions
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.retransmission", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.retransmission_count = len(result.stdout.strip().splitlines())
+    if not result.success or not result.stdout:
+        return health
 
-    # Count fast retransmissions
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.fast_retransmission", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.fast_retransmission_count = len(result.stdout.strip().splitlines())
-
-    # Count dup ACKs
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.duplicate_ack", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.duplicate_ack_count = len(result.stdout.strip().splitlines())
-
-    # Count zero windows
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.zero_window", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.zero_window_count = len(result.stdout.strip().splitlines())
-
-    # Count RSTs
-    result = await _tshark_query(pcap_path, "-Y", "tcp.flags.reset==1", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.rst_count = len(result.stdout.strip().splitlines())
-
-    # Count out-of-order
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.out_of_order", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.out_of_order_count = len(result.stdout.strip().splitlines())
-
-    # Count window full
-    result = await _tshark_query(pcap_path, "-Y", "tcp.analysis.window_full", "-T", "fields", "-e", "frame.number")
-    if result.success and result.stdout:
-        health.window_full_count = len(result.stdout.strip().splitlines())
+    for line in result.stdout.strip().splitlines():
+        health.total_segments += 1
+        parts = line.split("|")
+        # Each field is empty if flag not set, or has a value if set
+        if len(parts) >= 8:
+            if parts[1].strip():  # retransmission
+                health.retransmission_count += 1
+            if parts[2].strip():  # fast_retransmission
+                health.fast_retransmission_count += 1
+            if parts[3].strip():  # duplicate_ack
+                health.duplicate_ack_count += 1
+            if parts[4].strip():  # zero_window
+                health.zero_window_count += 1
+            if parts[5].strip() == "1":  # rst flag
+                health.rst_count += 1
+            if parts[6].strip():  # out_of_order
+                health.out_of_order_count += 1
+            if parts[7].strip():  # window_full
+                health.window_full_count += 1
 
     # Calculate retransmission percentage
     if health.total_segments > 0:
@@ -407,66 +461,64 @@ async def _extract_expert_info(pcap_path: str) -> ExpertSummary:
 
 
 async def _extract_dns(pcap_path: str) -> DnsSummary:
-    """Extract DNS statistics."""
+    """Extract DNS statistics in a single tshark pass."""
     summary = DnsSummary()
 
-    # DNS queries
+    # Single pass: extract all DNS frames (queries + responses)
     result = await _tshark_query(
         pcap_path,
-        "-Y", "dns.flags.response == 0",
+        "-Y", "dns",
         "-T", "fields",
-        "-e", "frame.time_relative",
-        "-e", "ip.src",
+        "-e", "dns.flags.response",
         "-e", "dns.qry.name",
-        "-e", "dns.qry.type",
-        "-E", "separator=|",
-    )
-    if result.success and result.stdout:
-        domains: Dict[str, int] = {}
-        for line in result.stdout.strip().splitlines():
-            summary.total_queries += 1
-            parts = line.split("|")
-            if len(parts) >= 3:
-                domain = parts[2].strip()
-                if domain:
-                    domains[domain] = domains.get(domain, 0) + 1
-        summary.unique_domains = len(domains)
-        summary.top_domains = [
-            {"domain": d, "count": c}
-            for d, c in sorted(domains.items(), key=lambda x: -x[1])[:10]
-        ]
-
-    # DNS responses with rcodes
-    result = await _tshark_query(
-        pcap_path,
-        "-Y", "dns.flags.response == 1",
-        "-T", "fields",
-        "-e", "frame.time_relative",
         "-e", "dns.flags.rcode",
         "-e", "dns.time",
         "-E", "separator=|",
     )
-    if result.success and result.stdout:
-        latencies: List[float] = []
-        for line in result.stdout.strip().splitlines():
+    if not result.success or not result.stdout:
+        return summary
+
+    domains: Dict[str, int] = {}
+    latencies: List[float] = []
+
+    for line in result.stdout.strip().splitlines():
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+
+        is_response = parts[0].strip() == "1"
+        domain = parts[1].strip() if len(parts) > 1 else ""
+
+        if not is_response:
+            # DNS query
+            summary.total_queries += 1
+            if domain:
+                domains[domain] = domains.get(domain, 0) + 1
+        else:
+            # DNS response
             summary.total_responses += 1
-            parts = line.split("|")
-            if len(parts) >= 2:
-                rcode = parts[1].strip()
+            if len(parts) >= 3:
+                rcode = parts[2].strip()
                 if rcode == "3":  # NXDOMAIN
                     summary.nxdomain_count += 1
                 elif rcode == "2":  # SERVFAIL
                     summary.servfail_count += 1
-            if len(parts) >= 3 and parts[2].strip():
+            if len(parts) >= 4 and parts[3].strip():
                 try:
-                    lat_ms = float(parts[2].strip()) * 1000
+                    lat_ms = float(parts[3].strip()) * 1000
                     latencies.append(lat_ms)
                 except ValueError:
                     pass
 
-        if latencies:
-            summary.avg_latency_ms = round(statistics.mean(latencies), 1)
-            summary.max_latency_ms = round(max(latencies), 1)
+    summary.unique_domains = len(domains)
+    summary.top_domains = [
+        {"domain": d, "count": c}
+        for d, c in sorted(domains.items(), key=lambda x: -x[1])[:10]
+    ]
+
+    if latencies:
+        summary.avg_latency_ms = round(statistics.mean(latencies), 1)
+        summary.max_latency_ms = round(max(latencies), 1)
 
     # Estimate timeouts (queries with no matching response)
     if summary.total_queries > summary.total_responses:
@@ -557,46 +609,47 @@ async def _extract_endpoints(pcap_path: str) -> List[EndpointEntry]:
 
 
 async def _extract_tls(pcap_path: str) -> TlsSummary:
-    """Extract TLS handshake statistics."""
+    """Extract TLS handshake and alert statistics in a single pass."""
     summary = TlsSummary()
 
+    # Single pass: extract TLS handshakes (ServerHello) and alerts
     result = await _tshark_query(
         pcap_path,
-        "-Y", "tls.handshake.type == 2",  # ServerHello
+        "-Y", "tls.handshake.type == 2 || tls.alert_message",
         "-T", "fields",
+        "-e", "tls.handshake.type",
         "-e", "ip.dst",
         "-e", "tls.handshake.extensions_server_name",
         "-e", "tls.record.version",
         "-e", "tls.handshake.ciphersuite",
+        "-e", "tls.alert_message",
         "-E", "separator=|",
     )
-    if result.success and result.stdout:
-        versions: Dict[str, int] = {}
-        for line in result.stdout.strip().splitlines():
+    if not result.success or not result.stdout:
+        return summary
+
+    versions: Dict[str, int] = {}
+    for line in result.stdout.strip().splitlines():
+        parts = line.split("|")
+        hs_type = parts[0].strip() if parts else ""
+        alert = parts[5].strip() if len(parts) > 5 else ""
+
+        if hs_type == "2":  # ServerHello
             summary.total_handshakes += 1
-            parts = line.split("|")
-
-            version = parts[2].strip() if len(parts) > 2 else "unknown"
+            version = parts[3].strip() if len(parts) > 3 else "unknown"
             versions[version] = versions.get(version, 0) + 1
-
             hs = TlsHandshake(
-                server=parts[0].strip() if parts else "",
-                sni=parts[1].strip() if len(parts) > 1 else "",
+                server=parts[1].strip() if len(parts) > 1 else "",
+                sni=parts[2].strip() if len(parts) > 2 else "",
                 version=version,
-                cipher=parts[3].strip() if len(parts) > 3 else "",
+                cipher=parts[4].strip() if len(parts) > 4 else "",
             )
             summary.handshakes.append(hs)
 
-        summary.versions = versions
+        if alert:  # TLS alert
+            summary.handshake_failure_count += 1
 
-    # Count alerts (handshake failures)
-    result = await _tshark_query(
-        pcap_path, "-Y", "tls.alert_message",
-        "-T", "fields", "-e", "frame.number",
-    )
-    if result.success and result.stdout:
-        summary.handshake_failure_count = len(result.stdout.strip().splitlines())
-
+    summary.versions = versions
     # Cap handshakes list
     summary.handshakes = summary.handshakes[:20]
     return summary

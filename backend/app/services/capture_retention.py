@@ -125,21 +125,29 @@ async def enforce_retention() -> dict:
             stats["pruned_size"] += 1
             total_size -= oldest[3]
 
-    # Execute pruning
+    # Execute pruning — use capture.delete_capture() when possible
+    # to also clean up in-memory state
+    from . import capture as capture_service
+
     for cid, meta_path, pcap_path, reason in to_prune:
         try:
             freed = 0
             if pcap_path.exists():
                 freed += pcap_path.stat().st_size
-                pcap_path.unlink()
-            if meta_path.exists():
-                meta_path.unlink()
 
-            # Also remove summary and analysis files
-            summary_path = _captures_dir() / f"{cid}.summary.json"
-            analysis_path = _captures_dir() / f"{cid}.analysis.json"
-            summary_path.unlink(missing_ok=True)
-            analysis_path.unlink(missing_ok=True)
+            # Use the service's delete to also clean in-memory _captures dict
+            try:
+                await capture_service.delete_capture(cid)
+            except (ValueError, Exception):
+                # Fallback: manual file removal if service delete fails
+                if pcap_path.exists():
+                    pcap_path.unlink()
+                if meta_path.exists():
+                    meta_path.unlink()
+                summary_path = _captures_dir() / f"{cid}.summary.json"
+                analysis_path = _captures_dir() / f"{cid}.analysis.json"
+                summary_path.unlink(missing_ok=True)
+                analysis_path.unlink(missing_ok=True)
 
             stats["freed_bytes"] += freed
             logger.info("Pruned capture %s (reason: %s, freed: %d bytes)", cid, reason, freed)
