@@ -210,7 +210,7 @@ export async function getCaptureStatus(): Promise<{
 export async function analyzeCapture(
   id: string,
   params?: { provider?: string; prompt?: string; focus?: string[]; pack?: string }
-): Promise<AnalysisResultV2> {
+): Promise<{ status: string; capture_id: string; message: string }> {
   return request(`/captures/${id}/analyze`, {
     method: 'POST',
     body: JSON.stringify(params ?? {}),

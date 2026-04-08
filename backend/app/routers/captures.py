@@ -1,5 +1,7 @@
 """Captures router — packet capture CRUD, summary, AI analysis, packs."""
 
+import asyncio
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -14,6 +16,8 @@ from ..models.capture import (
     StartCaptureRequest,
 )
 from ..services import ai_analyzer, capture, capture_retention
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/captures", tags=["captures"])
 
@@ -132,31 +136,93 @@ async def get_summary(capture_id: str):
 
 # ── AI Analysis ──────────────────────────────────────────────────────────────
 
-@router.post("/{capture_id}/analyze", response_model=AnalysisResultV2)
+async def _run_analysis_background(capture_id: str, req: AnalysisRequest) -> None:
+    """Run AI analysis as a background task so the user can navigate away.
+
+    Updates capture metadata with analysis_status for frontend polling.
+    """
+    info = capture.get_capture(capture_id)
+    if not info:
+        return
+
+    try:
+        # Mark as running
+        info.analysis_status = "running"
+        capture._captures[capture_id] = info
+        capture._save_metadata(info)
+
+        result = await ai_analyzer.analyze_capture(capture_id, req)
+
+        # Record in session
+        from ..services import session_manager
+        from ..models.session import ArtifactType
+        await session_manager.auto_add_artifact(
+            ArtifactType.ANALYSIS,
+            name=f"AI Analysis: {capture_id}",
+            data={
+                "summary": result.summary,
+                "finding_count": len(result.findings),
+                "health_badge": result.health_badge.value,
+                "provider": result.provider,
+            },
+            tags=["analysis", "ai", result.provider, info.pack],
+            metadata={"capture_id": capture_id},
+        )
+
+        # Mark done
+        info = capture.get_capture(capture_id) or info
+        info.analysis_status = "done"
+        info.has_analysis = True
+        info.analysis_error = None
+        capture._captures[capture_id] = info
+        capture._save_metadata(info)
+
+        logger.info("Background analysis complete for capture %s", capture_id)
+
+    except Exception as e:
+        err_name = type(e).__name__
+        err_detail = str(e) or "(no detail)"
+        logger.error("Background analysis failed for %s: %s: %s", capture_id, err_name, err_detail)
+
+        info = capture.get_capture(capture_id) or info
+        info.analysis_status = "error"
+        info.analysis_error = f"{err_name}: {err_detail}"
+        capture._captures[capture_id] = info
+        capture._save_metadata(info)
+
+
+@router.post("/{capture_id}/analyze")
 async def analyze_capture(capture_id: str, req: AnalysisRequest):
-    """Run AI analysis on a capture using the v2 evidence-based pipeline."""
+    """Launch AI analysis as a background task.
+
+    Returns immediately with status. The frontend polls GET /analysis
+    or GET /{capture_id} (which has analysis_status) to track progress.
+    The user can navigate away — analysis continues server-side.
+    """
     info = capture.get_capture(capture_id)
     if not info:
         raise HTTPException(404, f"Capture '{capture_id}' not found")
 
-    result = await ai_analyzer.analyze_capture(capture_id, req)
+    # Don't start duplicate analyses
+    if info.analysis_status == "running":
+        return {
+            "status": "already_running",
+            "capture_id": capture_id,
+            "message": "Analysis is already in progress.",
+        }
 
-    from ..services import session_manager
-    from ..models.session import ArtifactType
-    await session_manager.auto_add_artifact(
-        ArtifactType.ANALYSIS,
-        name=f"AI Analysis: {capture_id}",
-        data={
-            "summary": result.summary,
-            "finding_count": len(result.findings),
-            "health_badge": result.health_badge.value,
-            "provider": result.provider,
-        },
-        tags=["analysis", "ai", result.provider, info.pack],
-        metadata={"capture_id": capture_id},
-    )
+    # Mark as pending and launch background task
+    info.analysis_status = "pending"
+    capture._captures[capture_id] = info
+    capture._save_metadata(info)
 
-    return result
+    asyncio.create_task(_run_analysis_background(capture_id, req))
+
+    return {
+        "status": "started",
+        "capture_id": capture_id,
+        "message": "Analysis started. Poll GET /captures/{id} or GET /captures/{id}/analysis for results.",
+    }
 
 
 @router.get("/{capture_id}/analysis", response_model=AnalysisResultV2)
@@ -164,5 +230,9 @@ async def get_analysis(capture_id: str):
     """Get previous AI analysis results."""
     result = ai_analyzer.get_analysis(capture_id)
     if not result:
+        # Check if analysis is in progress
+        info = capture.get_capture(capture_id)
+        if info and info.analysis_status in ("pending", "running"):
+            raise HTTPException(202, "Analysis is still in progress")
         raise HTTPException(404, "No analysis found for this capture")
     return result

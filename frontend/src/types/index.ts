@@ -138,6 +138,8 @@ export interface CaptureInfo {
   health_badge?: string | null;
   has_summary: boolean;
   has_analysis: boolean;
+  analysis_status?: string | null;
+  analysis_error?: string | null;
 }
 
 // Analysis Pack

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AnalysisResultV2, CaptureSummary, SystemSettings, Finding } from '../types';
 import * as api from '../api/client';
 
@@ -60,6 +60,7 @@ export default function CaptureAnalysis({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch('/api/v1/system/settings').then(r => r.json()).then((s: SystemSettings) => {
@@ -72,22 +73,58 @@ export default function CaptureAnalysis({
     api.getCaptureSummary(captureId).then(setSummary).catch(() => {});
   }, [captureId]);
 
+  // Poll for analysis completion (runs when loading=true)
+  useEffect(() => {
+    if (!loading) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        // Check capture metadata for analysis_status
+        const info = await api.getCapture(captureId);
+        if (info.analysis_status === 'done') {
+          // Fetch the completed result
+          const r = await api.getAnalysis(captureId);
+          setResult(r);
+          setLoading(false);
+          setError(null);
+        } else if (info.analysis_status === 'error') {
+          setError(info.analysis_error || 'Analysis failed');
+          setLoading(false);
+        }
+        // else: still pending/running — keep polling
+      } catch {
+        // Ignore transient polling errors
+      }
+    }, 3000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [loading, captureId]);
+
   const runAnalysis = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const r = await api.analyzeCapture(captureId);
-      setResult(r);
+      const resp = await api.analyzeCapture(captureId);
+      if (resp.status === 'already_running') {
+        // Already in progress — just keep polling
+        return;
+      }
+      // Background task started — polling effect will pick up results
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Analysis failed');
-    } finally {
+      setError(e instanceof Error ? e.message : 'Failed to start analysis');
       setLoading(false);
     }
   }, [captureId]);
 
-  // Load existing analysis on mount
+  // Load existing analysis on mount, or detect in-progress analysis
   useEffect(() => {
     api.getAnalysis(captureId).then(setResult).catch(() => {});
+    // Also check if an analysis is already running from a previous visit
+    api.getCapture(captureId).then(info => {
+      if (info.analysis_status === 'running' || info.analysis_status === 'pending') {
+        setLoading(true); // Triggers polling
+      }
+    }).catch(() => {});
   }, [captureId]);
 
   return (
@@ -128,8 +165,9 @@ export default function CaptureAnalysis({
 
       {loading && (
         <div className="py-12 text-center text-gray-500">
-          <div className="mb-2 text-2xl">Analyzing capture data...</div>
-          <p className="text-sm">Extracting statistics and sending to AI for evidence-based analysis</p>
+          <div className="mb-3 text-2xl">Analyzing capture data...</div>
+          <p className="text-sm">Extracting statistics and sending to AI for evidence-based analysis.</p>
+          <p className="mt-1 text-xs text-gray-400">You can leave this page — analysis runs in the background.</p>
         </div>
       )}
 

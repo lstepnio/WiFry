@@ -103,6 +103,8 @@ class CaptureInfo(BaseModel):
     health_badge: Optional[str] = None
     has_summary: bool = False
     has_analysis: bool = False
+    analysis_status: Optional[str] = None  # "pending", "running", "done", "error"
+    analysis_error: Optional[str] = None
 
 
 # ── CaptureSummary: Typed stats extracted by tshark ──────────────────────────

@@ -56,6 +56,9 @@ async def test_get_capture_not_found(client: AsyncClient):
 
 
 async def test_analyze_capture_mock(client: AsyncClient):
+    """Test that analyze endpoint starts background analysis, then results are available."""
+    import asyncio
+
     # Start a capture
     resp = await client.post("/api/v1/captures", json={
         "interface": "wlan0",
@@ -63,12 +66,30 @@ async def test_analyze_capture_mock(client: AsyncClient):
     })
     capture_id = resp.json()["id"]
 
-    # Analyze it
+    # Trigger analysis — now returns immediately with "started"
     resp = await client.post(f"/api/v1/captures/{capture_id}/analyze", json={
         "provider": "anthropic",
         "prompt": "Analyze for issues",
         "focus": ["retransmissions"],
     })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] in ("started", "already_running")
+    assert data["capture_id"] == capture_id
+
+    # Wait for background task to complete (mock is instant, but yield to event loop)
+    for _ in range(20):
+        await asyncio.sleep(0.1)
+        resp = await client.get(f"/api/v1/captures/{capture_id}")
+        info = resp.json()
+        if info.get("analysis_status") == "done":
+            break
+
+    assert info["analysis_status"] == "done"
+    assert info["has_analysis"] is True
+
+    # Fetch actual analysis results
+    resp = await client.get(f"/api/v1/captures/{capture_id}/analysis")
     assert resp.status_code == 200
     data = resp.json()
     assert data["capture_id"] == capture_id
@@ -83,11 +104,21 @@ async def test_analyze_capture_mock(client: AsyncClient):
 
 
 async def test_get_analysis(client: AsyncClient):
+    """Test that analysis results persist and can be retrieved after completion."""
+    import asyncio
+
     # Start + analyze
     resp = await client.post("/api/v1/captures", json={"interface": "wlan0"})
     capture_id = resp.json()["id"]
 
     await client.post(f"/api/v1/captures/{capture_id}/analyze", json={})
+
+    # Wait for background task
+    for _ in range(20):
+        await asyncio.sleep(0.1)
+        info_resp = await client.get(f"/api/v1/captures/{capture_id}")
+        if info_resp.json().get("analysis_status") == "done":
+            break
 
     resp = await client.get(f"/api/v1/captures/{capture_id}/analysis")
     assert resp.status_code == 200
