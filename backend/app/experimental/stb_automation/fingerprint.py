@@ -1,15 +1,19 @@
 """STB_AUTOMATION — Screen fingerprinting for navigation graph identity.
 
-Produces a 12-character hex ID for a screen state based on a composite
-of ADB signals:
+Two fingerprint levels:
 
-  1. ``package/activity`` from dumpsys
-  2. Structural hash of the UI hierarchy skeleton (class names +
-     resource IDs — NOT text or bounds, which change with content)
+  1. ``fingerprint()`` — **stable** screen identity for the navigation graph.
+     Based on package/activity + structural skeleton (class names + resource
+     IDs).  Does NOT change when you scroll a list or different text appears.
 
-The fingerprint is stable across content changes (e.g. different movie
-titles on the same home screen) but distinguishes structurally different
-screens (e.g. home vs settings).
+  2. ``visual_hash()`` — **volatile** hash of everything visible on screen.
+     Includes text, bounds, focused/selected state, content_desc.  Changes
+     every time the focused element moves or any text changes.  Used for
+     vision cache invalidation.
+
+On NAF-heavy STBs (TiVo, etc.) where class_name and resource_id are
+mostly empty, the stable fingerprint degrades to package/activity alone.
+The visual_hash still differentiates screens via bounds + focused state.
 """
 
 import hashlib
@@ -19,9 +23,26 @@ from .models import ScreenState, UIElement
 
 
 def fingerprint(state: ScreenState) -> str:
-    """Compute a 12-char hex screen fingerprint."""
+    """Compute a 12-char hex screen fingerprint (stable identity)."""
     structural_hash = _structural_hash(state.ui_elements)
     composite = f"{state.package}/{state.activity}:{structural_hash}"
+    return hashlib.sha256(composite.encode()).hexdigest()[:12]
+
+
+def visual_hash(state: ScreenState) -> str:
+    """Compute a 12-char hex visual hash (volatile — changes with focus/text).
+
+    Used for vision cache invalidation.  Includes everything the user
+    can see: text, bounds, focused state, content_desc.
+    """
+    parts = []
+    for el in state.ui_elements:
+        parts.append(
+            f"{el.class_name}|{el.resource_id}|{el.text}|{el.content_desc}"
+            f"|{el.bounds}|{el.focused}|{el.selected}"
+        )
+    skeleton = "\n".join(parts)
+    composite = f"{state.package}/{state.activity}:{skeleton}"
     return hashlib.sha256(composite.encode()).hexdigest()[:12]
 
 

@@ -651,9 +651,29 @@ export interface StbScreenState {
   timestamp: string;
 }
 
+export interface StbVisionDiag {
+  cache_hit: boolean;
+  cache_key: string;
+  cache_age_ms: number;
+  cache_size: number;
+  api_call_ms: number;
+  error: string | null;
+  streamer_running: boolean;
+}
+
+export interface StbScreenStateDiag {
+  fingerprint: string;
+  visual_hash: string;
+  fingerprint_inputs: string;
+  vision: StbVisionDiag | null;
+  adb_signals: number;
+  read_ms: number;
+}
+
 export interface StbScreenStateResponse {
   state: StbScreenState;
   fingerprint: string;
+  diag: StbScreenStateDiag | null;
 }
 
 export interface StbCrawlStatus {

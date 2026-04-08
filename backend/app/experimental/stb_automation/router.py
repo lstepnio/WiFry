@@ -41,43 +41,65 @@ router = APIRouter(
 
 _FLAG_NAME = "stb_automation"
 
-# ── Vision cache (keyed by screen fingerprint) ────────────────────
-# Avoids re-analyzing the same screen on every poll.
-# Max 50 entries, entries expire after 5 minutes.
+# ── Vision cache (keyed by visual_hash, NOT stable fingerprint) ───
+# The stable fingerprint uses only class_name + resource_id which
+# doesn't change on NAF-heavy STBs.  visual_hash includes text,
+# bounds, and focused state — changes every time focus moves.
 _VISION_CACHE_MAX = 50
 _VISION_CACHE_TTL = 300  # seconds
 _vision_cache: OrderedDict[str, tuple[float, VisionAnalysis]] = OrderedDict()
 
 
-async def _get_or_run_vision(fingerprint: str) -> Optional[VisionAnalysis]:
+class VisionDiag(BaseModel):
+    """Diagnostics for vision cache behavior."""
+    cache_hit: bool = False
+    cache_key: str = ""  # visual_hash used as cache key
+    cache_age_ms: int = 0  # how old the cached result is (0 if fresh)
+    cache_size: int = 0  # total entries in cache
+    api_call_ms: int = 0  # time for AI API call (0 if cache hit)
+    error: Optional[str] = None
+    streamer_running: bool = False
+
+
+async def _get_or_run_vision(cache_key: str) -> tuple[Optional[VisionAnalysis], VisionDiag]:
     """Return cached vision result or run a new analysis.
 
-    Caches by screen fingerprint so repeated polls of the same screen
-    reuse the previous AI analysis without burning API calls.
+    Caches by visual_hash (volatile) so focus changes invalidate cache.
+    Returns (vision_result, diagnostics).
     """
     now = time.time()
+    diag = VisionDiag(cache_key=cache_key, cache_size=len(_vision_cache))
 
     # Check cache
-    if fingerprint in _vision_cache:
-        ts, cached = _vision_cache[fingerprint]
+    if cache_key in _vision_cache:
+        ts, cached = _vision_cache[cache_key]
         if now - ts < _VISION_CACHE_TTL:
-            _vision_cache.move_to_end(fingerprint)
-            return cached
+            _vision_cache.move_to_end(cache_key)
+            diag.cache_hit = True
+            diag.cache_age_ms = int((now - ts) * 1000)
+            diag.streamer_running = True  # was running when cached
+            return cached, diag
         else:
-            del _vision_cache[fingerprint]
+            del _vision_cache[cache_key]
 
     # Run vision analysis via HDMI frame
     try:
         from ..video_capture import analyzer, streamer
 
+        diag.streamer_running = streamer.is_running()
+
         if not streamer.is_running():
-            return None
+            diag.error = "HDMI streamer not running"
+            return None, diag
 
         frame = streamer.get_latest_frame()
         if frame is None:
-            return None
+            diag.error = "No HDMI frame available"
+            return None, diag
 
+        t0 = time.time()
         result = await analyzer.analyze_frame(frame_jpeg=frame)
+        diag.api_call_ms = int((time.time() - t0) * 1000)
 
         vision = VisionAnalysis(
             screen_type=result.screen_type or "unknown",
@@ -93,18 +115,20 @@ async def _get_or_run_vision(fingerprint: str) -> Optional[VisionAnalysis]:
         )
 
         # Store in cache
-        _vision_cache[fingerprint] = (now, vision)
+        _vision_cache[cache_key] = (now, vision)
         if len(_vision_cache) > _VISION_CACHE_MAX:
             _vision_cache.popitem(last=False)
+        diag.cache_size = len(_vision_cache)
 
-        return vision
+        return vision, diag
 
     except ImportError:
-        logger.debug("Video capture module not available for vision analysis")
-        return None
+        diag.error = "Video capture module not available"
+        return None, diag
     except Exception as e:
+        diag.error = str(e)
         logger.warning("Vision analysis failed: %s", e)
-        return None
+        return None, diag
 
 
 def _check_flag() -> None:
@@ -141,9 +165,20 @@ async def stb_status() -> StbStatus:
 # ── Screen State ────────────────────────────────────────────────────
 
 
+class ScreenStateDiag(BaseModel):
+    """Diagnostics attached to every /state response."""
+    fingerprint: str = ""  # stable nav-graph identity
+    visual_hash: str = ""  # volatile hash (changes with focus/text)
+    fingerprint_inputs: str = ""  # what went into the fingerprint
+    vision: Optional[VisionDiag] = None  # vision cache diagnostics
+    adb_signals: int = 0  # number of non-empty ADB signal fields
+    read_ms: int = 0  # total time to read state
+
+
 class ScreenStateResponse(BaseModel):
     state: ScreenState
     fingerprint: str
+    diag: Optional[ScreenStateDiag] = None
 
 
 class StartMonitorRequest(BaseModel):
@@ -163,10 +198,14 @@ async def get_state(
     and a fingerprint suitable for navigation graph identity.
 
     When ``include_vision=true``, also captures the current HDMI frame
-    and runs AI vision analysis.  Results are cached by fingerprint
-    so repeated polls of the same screen reuse the analysis.
+    and runs AI vision analysis.  Results are cached by **visual_hash**
+    (volatile — changes with focus/text) not the stable fingerprint.
+
+    Always includes diagnostics showing cache hits, hash values, and timing.
     """
     _check_flag()
+
+    t0 = time.time()
 
     if settings.mock_mode:
         state = screen_reader.mock_screen_state()
@@ -179,11 +218,32 @@ async def get_state(
             include_hierarchy=include_hierarchy,
         )
 
-    fingerprint = fp.fingerprint(state)
+    stable_fp = fp.fingerprint(state)
+    volatile_vh = fp.visual_hash(state)
 
-    # Run vision analysis if requested (cached by fingerprint)
+    # Count non-empty ADB signal fields for diagnostics
+    adb_signals = sum([
+        bool(state.package),
+        bool(state.activity),
+        bool(state.window_title),
+        bool(state.focused_element),
+        bool(state.focused_context),
+        len(state.fragments) > 0,
+        len(state.ui_elements) > 0,
+    ])
+
+    # Build diagnostics
+    diag = ScreenStateDiag(
+        fingerprint=stable_fp,
+        visual_hash=volatile_vh,
+        fingerprint_inputs=f"pkg={state.package} act={state.activity} elements={len(state.ui_elements)} frags={len(state.fragments)}",
+        adb_signals=adb_signals,
+    )
+
+    # Run vision analysis if requested (cached by visual_hash — volatile)
     if include_vision:
-        vision = await _get_or_run_vision(fingerprint)
+        vision, vision_diag = await _get_or_run_vision(volatile_vh)
+        diag.vision = vision_diag
         if vision:
             state.vision = vision
             # Enrich focused_context with vision data when ADB signals are sparse
@@ -196,9 +256,12 @@ async def get_state(
                 else:
                     state.focused_context = vision_ctx
 
+    diag.read_ms = int((time.time() - t0) * 1000)
+
     return ScreenStateResponse(
         state=state,
-        fingerprint=fingerprint,
+        fingerprint=stable_fp,
+        diag=diag,
     )
 
 

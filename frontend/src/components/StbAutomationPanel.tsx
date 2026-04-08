@@ -216,6 +216,7 @@ export default function StbAutomationPanel() {
       setScreenState({
         state: result.post_state,
         fingerprint: result.post_fingerprint,
+        diag: null,
       });
       // If vision is enabled, re-read state with vision analysis in background
       // (navigate endpoint doesn't include vision to keep it fast)
@@ -633,9 +634,23 @@ export default function StbAutomationPanel() {
                 <h3 className={`mb-3 ${sectionTitle}`}>Screen State</h3>
                 {screenState ? (
                   <div className="space-y-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500 dark:text-gray-400">Fingerprint:</span>
-                      <span className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] dark:bg-gray-800">{screenState.fingerprint}</span>
+                    {/* Hashes — stable vs volatile */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500 dark:text-gray-400">FP:</span>
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-gray-800">{screenState.diag?.fingerprint ?? screenState.fingerprint}</span>
+                      </div>
+                      {screenState.diag?.visual_hash && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-gray-500 dark:text-gray-400">VH:</span>
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-amber-900/40">{screenState.diag.visual_hash}</span>
+                        </div>
+                      )}
+                      {screenState.diag && (
+                        <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                          {screenState.diag.read_ms}ms &middot; {screenState.diag.adb_signals} signals
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">Package: </span>
@@ -648,13 +663,21 @@ export default function StbAutomationPanel() {
                     {/* AI Vision Analysis — most human-readable signal */}
                     {screenState.state.vision && (
                       <div className="rounded border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-800 dark:bg-emerald-900/20">
-                        <div className="mb-1 flex items-center gap-2">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
                           <span className="text-[10px] font-medium uppercase tracking-wider text-emerald-600 dark:text-emerald-400">AI Vision</span>
                           <span className={`${badge} ${screenState.state.vision.screen_type === 'unknown' ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'}`}>
                             {screenState.state.vision.screen_type}
                           </span>
                           {screenState.state.vision.screen_title && (
                             <span className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">{screenState.state.vision.screen_title}</span>
+                          )}
+                          {/* Vision cache diagnostic badge */}
+                          {screenState.diag?.vision && (
+                            <span className={`${badge} ${screenState.diag.vision.cache_hit ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'}`}>
+                              {screenState.diag.vision.cache_hit
+                                ? `CACHE ${Math.round(screenState.diag.vision.cache_age_ms / 1000)}s ago`
+                                : `API ${screenState.diag.vision.api_call_ms}ms`}
+                            </span>
                           )}
                         </div>
                         {screenState.state.vision.focused_label && (
@@ -678,6 +701,13 @@ export default function StbAutomationPanel() {
                         <div className="mt-1 text-[9px] text-emerald-500 dark:text-emerald-500">
                           {screenState.state.vision.provider} &middot; {screenState.state.vision.tokens_used} tokens
                         </div>
+                      </div>
+                    )}
+                    {/* Vision error/status when enabled but no result */}
+                    {visionEnabled && !screenState.state.vision && screenState.diag?.vision && (
+                      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                        Vision: {screenState.diag.vision.error || 'No result'}
+                        {!screenState.diag.vision.streamer_running && ' (HDMI streamer not running)'}
                       </div>
                     )}
                     {/* ADB Context — technical signals */}
@@ -704,6 +734,33 @@ export default function StbAutomationPanel() {
                       <span className="text-gray-500 dark:text-gray-400">UI Elements: </span>
                       <span className="text-gray-900 dark:text-white">{screenState.state.ui_elements?.length ?? 0}</span>
                     </div>
+                    {/* Diagnostics panel — collapsible */}
+                    {screenState.diag && (
+                      <details className="rounded border border-gray-200 dark:border-gray-700">
+                        <summary className="cursor-pointer px-2 py-1 text-[10px] font-medium text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800">
+                          Diagnostics
+                        </summary>
+                        <div className="space-y-0.5 px-2 py-1 font-mono text-[10px] text-gray-500 dark:text-gray-400">
+                          <div>stable_fp: {screenState.diag.fingerprint}</div>
+                          <div>visual_hash: {screenState.diag.visual_hash}</div>
+                          <div>inputs: {screenState.diag.fingerprint_inputs}</div>
+                          <div>adb_signals: {screenState.diag.adb_signals}</div>
+                          <div>read_ms: {screenState.diag.read_ms}</div>
+                          {screenState.diag.vision && (
+                            <>
+                              <div className="mt-1 border-t border-gray-200 pt-1 dark:border-gray-700">vision:</div>
+                              <div>&nbsp; cache_hit: <span className={screenState.diag.vision.cache_hit ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}>{String(screenState.diag.vision.cache_hit)}</span></div>
+                              <div>&nbsp; cache_key: {screenState.diag.vision.cache_key}</div>
+                              <div>&nbsp; cache_age_ms: {screenState.diag.vision.cache_age_ms}</div>
+                              <div>&nbsp; cache_size: {screenState.diag.vision.cache_size}</div>
+                              <div>&nbsp; api_call_ms: {screenState.diag.vision.api_call_ms}</div>
+                              {screenState.diag.vision.error && <div>&nbsp; error: {screenState.diag.vision.error}</div>}
+                              <div>&nbsp; streamer: {String(screenState.diag.vision.streamer_running)}</div>
+                            </>
+                          )}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 ) : (
                   <p className="text-xs text-gray-500 dark:text-gray-400">
