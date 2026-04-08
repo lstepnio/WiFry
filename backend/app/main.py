@@ -23,6 +23,10 @@ from .routers import adb, annotations, captures, dns, hdmi, hw_tests, impairment
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("WiFry starting up (mock_mode=%s)", settings.mock_mode)
+
+    # Load persistent settings (API keys, etc.) before anything else
+    from .services import settings_manager  # noqa: F401 — side-effect: _load() populates settings
+
     if settings.mock_mode:
         logger.warning("Running in MOCK MODE — tc commands will be logged, not executed")
     else:
