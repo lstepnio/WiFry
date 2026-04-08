@@ -18,6 +18,8 @@ All endpoints return 404 if the feature flag is disabled.
 """
 
 import logging
+import time
+from collections import OrderedDict
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -28,7 +30,7 @@ from ...services import feature_flags
 from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep
+from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
 
 logger = logging.getLogger("wifry.stb_automation.router")
 
@@ -38,6 +40,71 @@ router = APIRouter(
 )
 
 _FLAG_NAME = "stb_automation"
+
+# ── Vision cache (keyed by screen fingerprint) ────────────────────
+# Avoids re-analyzing the same screen on every poll.
+# Max 50 entries, entries expire after 5 minutes.
+_VISION_CACHE_MAX = 50
+_VISION_CACHE_TTL = 300  # seconds
+_vision_cache: OrderedDict[str, tuple[float, VisionAnalysis]] = OrderedDict()
+
+
+async def _get_or_run_vision(fingerprint: str) -> Optional[VisionAnalysis]:
+    """Return cached vision result or run a new analysis.
+
+    Caches by screen fingerprint so repeated polls of the same screen
+    reuse the previous AI analysis without burning API calls.
+    """
+    now = time.time()
+
+    # Check cache
+    if fingerprint in _vision_cache:
+        ts, cached = _vision_cache[fingerprint]
+        if now - ts < _VISION_CACHE_TTL:
+            _vision_cache.move_to_end(fingerprint)
+            return cached
+        else:
+            del _vision_cache[fingerprint]
+
+    # Run vision analysis via HDMI frame
+    try:
+        from ..video_capture import analyzer, streamer
+
+        if not streamer.is_running():
+            return None
+
+        frame = streamer.get_latest_frame()
+        if frame is None:
+            return None
+
+        result = await analyzer.analyze_frame(frame_jpeg=frame)
+
+        vision = VisionAnalysis(
+            screen_type=result.screen_type or "unknown",
+            screen_title=result.screen_title or "",
+            focused_label=result.focused_element.label if result.focused_element else "",
+            focused_position=result.focused_element.position if result.focused_element else "",
+            focused_confidence=result.focused_element.confidence if result.focused_element else "low",
+            navigation_path=result.navigation_path or [],
+            visible_text=result.visible_text_summary or "",
+            raw_description=result.raw_description or "",
+            provider=result.provider or "",
+            tokens_used=result.tokens_used or 0,
+        )
+
+        # Store in cache
+        _vision_cache[fingerprint] = (now, vision)
+        if len(_vision_cache) > _VISION_CACHE_MAX:
+            _vision_cache.popitem(last=False)
+
+        return vision
+
+    except ImportError:
+        logger.debug("Video capture module not available for vision analysis")
+        return None
+    except Exception as e:
+        logger.warning("Vision analysis failed: %s", e)
+        return None
 
 
 def _check_flag() -> None:
@@ -88,11 +155,16 @@ class StartMonitorRequest(BaseModel):
 async def get_state(
     serial: str = Query(..., description="ADB device serial"),
     include_hierarchy: bool = Query(True, description="Include uiautomator dump"),
+    include_vision: bool = Query(False, description="Include AI vision analysis of HDMI frame"),
 ) -> ScreenStateResponse:
-    """STB_AUTOMATION — Read the current screen state via ADB.
+    """STB_AUTOMATION — Read the current screen state via ADB + optional vision.
 
     Returns the foreground activity, UI hierarchy, focused element,
     and a fingerprint suitable for navigation graph identity.
+
+    When ``include_vision=true``, also captures the current HDMI frame
+    and runs AI vision analysis.  Results are cached by fingerprint
+    so repeated polls of the same screen reuse the analysis.
     """
     _check_flag()
 
@@ -107,9 +179,26 @@ async def get_state(
             include_hierarchy=include_hierarchy,
         )
 
+    fingerprint = fp.fingerprint(state)
+
+    # Run vision analysis if requested (cached by fingerprint)
+    if include_vision:
+        vision = await _get_or_run_vision(fingerprint)
+        if vision:
+            state.vision = vision
+            # Enrich focused_context with vision data when ADB signals are sparse
+            if vision.focused_label:
+                vision_ctx = f"vision: {vision.focused_label}"
+                if vision.focused_position:
+                    vision_ctx += f" ({vision.focused_position})"
+                if state.focused_context:
+                    state.focused_context = f"{vision_ctx} | {state.focused_context}"
+                else:
+                    state.focused_context = vision_ctx
+
     return ScreenStateResponse(
         state=state,
-        fingerprint=fp.fingerprint(state),
+        fingerprint=fingerprint,
     )
 
 

@@ -45,6 +45,21 @@ class LogcatEvent(BaseModel):
 # --- Screen State ---
 
 
+class VisionAnalysis(BaseModel):
+    """AI vision analysis of an HDMI frame."""
+
+    screen_type: str = "unknown"  # home, settings, player, menu, etc.
+    screen_title: str = ""
+    focused_label: str = ""  # human-readable label of focused element
+    focused_position: str = ""  # spatial description
+    focused_confidence: str = "low"  # high, medium, low
+    navigation_path: List[str] = []  # breadcrumb: ["Home", "Settings"]
+    visible_text: str = ""  # brief summary of readable text
+    raw_description: str = ""
+    provider: str = ""
+    tokens_used: int = 0
+
+
 class ScreenState(BaseModel):
     """Raw observation from a single ADB read cycle."""
 
@@ -55,6 +70,7 @@ class ScreenState(BaseModel):
     focused_context: str = ""  # human-readable context from all signals
     window_title: str = ""  # from dumpsys window
     fragments: List[str] = []  # active fragment names from dumpsys activity top
+    vision: Optional[VisionAnalysis] = None  # AI analysis of HDMI frame
     recent_events: List[LogcatEvent] = []
     timestamp: str = ""
 

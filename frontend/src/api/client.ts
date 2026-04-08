@@ -384,8 +384,8 @@ export async function getStbStatus(): Promise<import('../types').StbStatus> {
   return request('/experimental/stb/status');
 }
 
-export async function getStbState(serial: string, includeHierarchy: boolean = true): Promise<import('../types').StbScreenStateResponse> {
-  const params = new URLSearchParams({ serial, include_hierarchy: String(includeHierarchy) });
+export async function getStbState(serial: string, includeHierarchy: boolean = true, includeVision: boolean = false): Promise<import('../types').StbScreenStateResponse> {
+  const params = new URLSearchParams({ serial, include_hierarchy: String(includeHierarchy), include_vision: String(includeVision) });
   return request(`/experimental/stb/state?${params}`);
 }
 

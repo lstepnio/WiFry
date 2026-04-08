@@ -110,6 +110,7 @@ export default function StbAutomationPanel() {
   const [screenState, setScreenState] = useState<StbScreenStateResponse | null>(null);
   const [lastNav, setLastNav] = useState<StbNavigateResponse | null>(null);
   const [navigating, setNavigating] = useState(false);
+  const [visionEnabled, setVisionEnabled] = useState(false);
 
   // HDMI stream
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -216,6 +217,11 @@ export default function StbAutomationPanel() {
         state: result.post_state,
         fingerprint: result.post_fingerprint,
       });
+      // If vision is enabled, re-read state with vision analysis in background
+      // (navigate endpoint doesn't include vision to keep it fast)
+      if (visionEnabled) {
+        api.getStbState(selectedSerial, true, true).then(s => setScreenState(s)).catch(() => {});
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Navigate failed');
     } finally {
@@ -227,7 +233,7 @@ export default function StbAutomationPanel() {
     if (!selectedSerial) return;
     setLoading(true);
     try {
-      const s = await api.getStbState(selectedSerial);
+      const s = await api.getStbState(selectedSerial, true, visionEnabled);
       setScreenState(s);
       setError(null);
     } catch (e) {
@@ -468,7 +474,7 @@ export default function StbAutomationPanel() {
 
         {/* Selected device controls */}
         {selectedDevice && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <button onClick={handleReadState} disabled={loading} className={btnPrimary}>
               Read State
             </button>
@@ -479,6 +485,16 @@ export default function StbAutomationPanel() {
             >
               {status?.logcat_monitor_active ? 'Stop Monitor' : 'Start Monitor'}
             </button>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={visionEnabled}
+                onChange={e => setVisionEnabled(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              AI Vision
+              {visionEnabled && <span className="text-[10px] text-amber-600 dark:text-amber-400">(uses API tokens)</span>}
+            </label>
             {status && (
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 Monitor:{' '}
@@ -629,10 +645,45 @@ export default function StbAutomationPanel() {
                       <span className="text-gray-500 dark:text-gray-400">Activity: </span>
                       <span className="text-gray-900 dark:text-white">{screenState.state.activity || '\u2014'}</span>
                     </div>
-                    {/* Focused Context — rich multi-signal summary */}
+                    {/* AI Vision Analysis — most human-readable signal */}
+                    {screenState.state.vision && (
+                      <div className="rounded border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-800 dark:bg-emerald-900/20">
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-emerald-600 dark:text-emerald-400">AI Vision</span>
+                          <span className={`${badge} ${screenState.state.vision.screen_type === 'unknown' ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'}`}>
+                            {screenState.state.vision.screen_type}
+                          </span>
+                          {screenState.state.vision.screen_title && (
+                            <span className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">{screenState.state.vision.screen_title}</span>
+                          )}
+                        </div>
+                        {screenState.state.vision.focused_label && (
+                          <div className="text-[11px] text-emerald-800 dark:text-emerald-200">
+                            <span className="font-medium">Focused:</span> {screenState.state.vision.focused_label}
+                            {screenState.state.vision.focused_position && (
+                              <span className="text-emerald-600 dark:text-emerald-400"> ({screenState.state.vision.focused_position})</span>
+                            )}
+                          </div>
+                        )}
+                        {screenState.state.vision.navigation_path?.length > 0 && (
+                          <div className="text-[11px] text-emerald-800 dark:text-emerald-200">
+                            <span className="font-medium">Nav:</span> {screenState.state.vision.navigation_path.join(' > ')}
+                          </div>
+                        )}
+                        {screenState.state.vision.visible_text && (
+                          <div className="mt-1 text-[10px] leading-relaxed text-emerald-700 dark:text-emerald-300">
+                            {screenState.state.vision.visible_text}
+                          </div>
+                        )}
+                        <div className="mt-1 text-[9px] text-emerald-500 dark:text-emerald-500">
+                          {screenState.state.vision.provider} &middot; {screenState.state.vision.tokens_used} tokens
+                        </div>
+                      </div>
+                    )}
+                    {/* ADB Context — technical signals */}
                     {screenState.state.focused_context && (
                       <div className="rounded border border-purple-200 bg-purple-50 p-2 dark:border-purple-800 dark:bg-purple-900/20">
-                        <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-purple-500 dark:text-purple-400">Context</div>
+                        <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-purple-500 dark:text-purple-400">ADB Context</div>
                         <div className="space-y-0.5 text-[11px] text-purple-900 dark:text-purple-100">
                           {screenState.state.focused_context.split(' | ').map((part, i) => (
                             <div key={i}>{part}</div>

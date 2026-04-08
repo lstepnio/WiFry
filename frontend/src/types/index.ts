@@ -625,6 +625,19 @@ export interface StbLogcatEvent {
   raw: string;
 }
 
+export interface StbVisionAnalysis {
+  screen_type: string;
+  screen_title: string;
+  focused_label: string;
+  focused_position: string;
+  focused_confidence: string;
+  navigation_path: string[];
+  visible_text: string;
+  raw_description: string;
+  provider: string;
+  tokens_used: number;
+}
+
 export interface StbScreenState {
   package: string;
   activity: string;
@@ -633,6 +646,7 @@ export interface StbScreenState {
   focused_context: string;
   window_title: string;
   fragments: string[];
+  vision: StbVisionAnalysis | null;
   recent_events: StbLogcatEvent[];
   timestamp: string;
 }
