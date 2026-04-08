@@ -8,8 +8,9 @@ Update flow:
   2. Fetch tags from remote
   3. Compare current VERSION with latest tag
   4. Checkout target tag
-  5. pip install + npm build
-  6. Write new VERSION file
+  5. Install any new system (apt) packages
+  6. pip install + npm build
+  7. Write new VERSION file
   7. Auto-restart backend (deferred 3s)
 
 Rollback: on failure, restore previous version tag + VERSION file.
@@ -283,6 +284,9 @@ async def apply_update(target_version: str = "") -> dict:
     # Deploy system config files that live outside /opt/wifry
     await _deploy_system_configs(steps)
 
+    # Install any new system packages added since the previous version
+    await _install_system_packages(steps)
+
     # Write VERSION file
     version_str = target_version.lstrip("v")
     try:
@@ -396,6 +400,37 @@ async def _deploy_system_configs(steps: list) -> None:
     else:
         logger.warning("Failed to set dumpcap capabilities: %s", result.stderr)
         steps.append("dumpcap capabilities: FAILED")
+
+
+async def _install_system_packages(steps: list) -> None:
+    """Install system packages from setup/apt-packages.txt.
+
+    Runs after git checkout so newly-added dependencies are picked up.
+    apt-get install is idempotent — already-installed packages are skipped.
+    """
+    pkg_file = Path(INSTALL_DIR) / "setup" / "apt-packages.txt"
+    if not pkg_file.exists():
+        logger.info("No apt-packages.txt found, skipping system package install")
+        return
+
+    packages = [
+        line.strip()
+        for line in pkg_file.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not packages:
+        return
+
+    result = await run(
+        "apt-get", "install", "-y", "-qq", *packages,
+        sudo=True, check=False, timeout=180,
+    )
+    if result.success:
+        logger.info("System packages up to date")
+        steps.append("apt packages: ok")
+    else:
+        logger.warning("apt-get install failed: %s", result.stderr)
+        steps.append(f"apt packages: FAILED ({result.stderr[:100]})")
 
 
 # --- Rollback ---

@@ -116,6 +116,7 @@ apt-get install -y -qq \
     hping3 iperf3 \
     wireguard-tools openvpn \
     strongswan strongswan-swanctl \
+    android-tools-adb \
     curl jq rsync \
     unattended-upgrades apt-listchanges rpi-eeprom
 
