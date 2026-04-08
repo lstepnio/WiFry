@@ -20,7 +20,7 @@ from typing import Optional, Set
 
 from . import action_executor, fingerprint as fp, nav_model, screen_reader
 from .logcat_monitor import get_monitor
-from .models import CrawlConfig, CrawlStatus, ScreenNode, ScreenState
+from .models import CrawlConfig, CrawlStatus, NavigationModel, ScreenNode, ScreenState
 
 logger = logging.getLogger("wifry.stb_automation.crawl_engine")
 
