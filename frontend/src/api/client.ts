@@ -366,3 +366,15 @@ export async function startVideoStream(): Promise<{ status: string; device?: str
 export async function stopVideoStream(): Promise<{ status: string }> {
   return request('/experimental/video/stop', { method: 'POST' });
 }
+
+// EXPERIMENTAL_VIDEO_CAPTURE — Frame analysis endpoints
+export async function getVideoSnapshot(): Promise<{ image: string; format: string; size_bytes: number; captured_at: string }> {
+  return request('/experimental/video/snapshot');
+}
+
+export async function analyzeVideoFrame(params?: { provider?: string; model?: string }): Promise<import('../types').FrameAnalysisResult> {
+  return request('/experimental/video/analyze', {
+    method: 'POST',
+    body: JSON.stringify(params ?? {}),
+  });
+}

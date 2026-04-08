@@ -458,6 +458,29 @@ export interface AiModelInfo {
   tier: string;
 }
 
+// EXPERIMENTAL_VIDEO_CAPTURE — Frame analysis types
+
+export interface FocusedElement {
+  element_type: string;
+  label: string;
+  position: string;
+  confidence: string;
+}
+
+export interface FrameAnalysisResult {
+  screen_type: string;
+  screen_title: string | null;
+  focused_element: FocusedElement | null;
+  navigation_path: string[] | null;
+  visible_text_summary: string;
+  raw_description: string;
+  provider: string;
+  model: string;
+  tokens_used: number;
+  analyzed_at: string;
+  error: string | null;
+}
+
 export interface FeatureFlag {
   enabled: boolean;
   label: string;

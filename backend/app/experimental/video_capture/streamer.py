@@ -209,6 +209,12 @@ def is_running() -> bool:
     return _running and _capture_thread is not None and _capture_thread.is_alive()
 
 
+def get_latest_frame() -> bytes | None:
+    """EXPERIMENTAL_VIDEO_CAPTURE — Return a copy of the latest JPEG frame, or None."""
+    with _frame_lock:
+        return bytes(_latest_frame) if _latest_frame is not None else None
+
+
 async def mjpeg_frames() -> AsyncGenerator[bytes, None]:
     """EXPERIMENTAL_VIDEO_CAPTURE — Yield MJPEG multipart frames for HTTP streaming."""
     global _client_count
