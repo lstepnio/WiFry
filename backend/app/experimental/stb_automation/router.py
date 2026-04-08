@@ -5,6 +5,9 @@ Phase 1A endpoints:
   GET  /api/v1/experimental/stb/state   — Current screen state via ADB
   GET  /api/v1/experimental/stb/events  — Recent logcat events
 
+Phase 1B endpoints:
+  POST /api/v1/experimental/stb/navigate — Send key + observe result
+
 All endpoints return 404 if the feature flag is disabled.
 """
 
@@ -16,8 +19,7 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import fingerprint as fp
-from . import screen_reader
+from . import action_executor, fingerprint as fp, screen_reader
 from .logcat_monitor import get_monitor
 from .models import CrawlStatus, LogcatEvent, ScreenState
 
@@ -150,3 +152,54 @@ async def stop_monitor() -> dict:
 
     await monitor.stop()
     return {"status": "stopped"}
+
+
+# ── Navigation (Phase 1B) ──────────────────────────────────────────
+
+
+class NavigateRequest(BaseModel):
+    serial: str
+    action: str  # keycode name: up, down, left, right, enter, back, home, ...
+    settle_timeout_ms: int = 3000
+
+
+class NavigateResponse(BaseModel):
+    action: str
+    pre_state: ScreenState
+    post_state: ScreenState
+    pre_fingerprint: str
+    post_fingerprint: str
+    transitioned: bool
+    settle_method: str
+    settle_ms: float
+
+
+@router.post("/navigate")
+async def navigate(req: NavigateRequest) -> NavigateResponse:
+    """STB_AUTOMATION — Send a key press and observe the result.
+
+    Sends the key via ADB, then uses tiered settle detection:
+    logcat events (fastest) → dumpsys poll → uiautomator hash → timeout.
+    Returns before/after screen state with timing metadata.
+    """
+    _check_flag()
+
+    if settings.mock_mode:
+        result = await action_executor.navigate_mock(req.action)
+    else:
+        result = await action_executor.navigate(
+            serial=req.serial,
+            action=req.action,
+            settle_timeout_ms=req.settle_timeout_ms,
+        )
+
+    return NavigateResponse(
+        action=result.action,
+        pre_state=result.pre_state,
+        post_state=result.post_state,
+        pre_fingerprint=result.pre_fingerprint,
+        post_fingerprint=result.post_fingerprint,
+        transitioned=result.transitioned,
+        settle_method=result.settle_method,
+        settle_ms=round(result.settle_ms, 1),
+    )

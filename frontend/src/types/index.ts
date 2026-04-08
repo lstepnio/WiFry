@@ -651,3 +651,14 @@ export interface StbStatus {
   logcat_serial: string | null;
   crawl: StbCrawlStatus;
 }
+
+export interface StbNavigateResponse {
+  action: string;
+  pre_state: StbScreenState;
+  post_state: StbScreenState;
+  pre_fingerprint: string;
+  post_fingerprint: string;
+  transitioned: boolean;
+  settle_method: string;
+  settle_ms: number;
+}

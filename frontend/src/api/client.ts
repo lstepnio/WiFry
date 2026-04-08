@@ -403,3 +403,10 @@ export async function startStbMonitor(serial: string, tags?: string[]): Promise<
 export async function stopStbMonitor(): Promise<{ status: string }> {
   return request('/experimental/stb/monitor/stop', { method: 'POST' });
 }
+
+export async function stbNavigate(serial: string, action: string, settleTimeoutMs: number = 3000): Promise<import('../types').StbNavigateResponse> {
+  return request('/experimental/stb/navigate', {
+    method: 'POST',
+    body: JSON.stringify({ serial, action, settle_timeout_ms: settleTimeoutMs }),
+  });
+}
