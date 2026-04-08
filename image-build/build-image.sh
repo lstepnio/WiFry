@@ -315,7 +315,39 @@ apt --fix-broken install -y 2>/dev/null || true
 apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
     python3-venv hostapd dnsmasq bridge-utils iptables git \
     tshark wireless-tools iw ffmpeg v4l-utils \
-    hping3 iperf3 wireguard-tools openvpn curl jq
+    hping3 iperf3 wireguard-tools openvpn curl jq \
+    unattended-upgrades apt-listchanges rpi-eeprom
+
+# Upgrade all packages to latest (security patches since image was built)
+echo "Upgrading system packages..."
+apt-get dist-upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+apt-get autoremove -y -qq
+
+# Update RPi bootloader firmware
+echo "Updating RPi firmware..."
+rpi-eeprom-update -a 2>/dev/null || true
+
+# Configure unattended-upgrades for automatic security patches
+echo "Configuring automatic security updates..."
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPG'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPG
+
+cat > /etc/apt/apt.conf.d/52wifry-unattended-upgrades <<'UNATTENDED'
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Raspbian,codename=${distro_codename}";
+    "origin=Raspberry Pi Foundation,codename=${distro_codename}";
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UNATTENDED
+
+# Enable the unattended-upgrades timer
+systemctl enable unattended-upgrades 2>/dev/null || true
 
 # Enable dnsmasq conf-dir (freshly installed dnsmasq has it commented out)
 if [ -f /etc/dnsmasq.conf ]; then
