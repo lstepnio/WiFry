@@ -133,19 +133,19 @@ export default function SpeedTest() {
                   </div>
                   <div className="grid grid-cols-3 gap-4 text-center sm:grid-cols-6">
                     <div>
-                      <div className="text-2xl font-bold text-green-500">{r.download_mbps}</div>
+                      <div className="text-2xl font-bold text-green-500">{Number(r.download_mbps).toFixed(1)}</div>
                       <div className="text-[10px] uppercase text-gray-500">Download Mbps</div>
                     </div>
                     <div>
-                      <div className="text-2xl font-bold text-blue-500">{r.upload_mbps}</div>
+                      <div className="text-2xl font-bold text-blue-500">{Number(r.upload_mbps).toFixed(1)}</div>
                       <div className="text-[10px] uppercase text-gray-500">Upload Mbps</div>
                     </div>
                     <div>
-                      <div className="text-2xl font-bold text-gray-900 dark:text-white">{r.ping_ms ?? r.jitter_ms}</div>
+                      <div className="text-2xl font-bold text-gray-900 dark:text-white">{Number(r.ping_ms ?? r.jitter_ms).toFixed(1)}</div>
                       <div className="text-[10px] uppercase text-gray-500">{r.ping_ms != null ? 'Ping ms' : 'Jitter ms'}</div>
                     </div>
                     <div>
-                      <div className={`text-2xl font-bold ${r.packet_loss_pct > 0.1 ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>{r.packet_loss_pct}%</div>
+                      <div className={`text-2xl font-bold ${r.packet_loss_pct > 0.1 ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>{Number(r.packet_loss_pct).toFixed(1)}%</div>
                       <div className="text-[10px] uppercase text-gray-500">Loss</div>
                     </div>
                     {r.retransmits != null && (
@@ -156,7 +156,7 @@ export default function SpeedTest() {
                     )}
                     {r.jitter_ms != null && r.ping_ms != null && (
                       <div>
-                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{r.jitter_ms}</div>
+                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{Number(r.jitter_ms).toFixed(2)}</div>
                         <div className="text-[10px] uppercase text-gray-500">Jitter ms</div>
                       </div>
                     )}

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     ai_provider: str = "anthropic"  # "anthropic" or "openai"
     ai_model: str = ""  # Empty = provider default (gpt-5.4-mini / claude-sonnet-4-20250514)
 
+    # tshark processing
+    tshark_concurrency: int = 1   # concurrent tshark queries per pipeline (1 = sequential)
+    tshark_nice: int = 10         # nice value for tshark subprocesses
+
     # Capture v2
     capture_max_concurrent: int = 2
     capture_ring_segment_kb: int = 10240  # 10 MB per segment

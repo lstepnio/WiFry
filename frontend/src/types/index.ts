@@ -238,6 +238,13 @@ export interface InterestAnnotations {
   health_badge: HealthBadge;
 }
 
+export interface ProcessingStats {
+  queue_wait_secs: number;
+  processing_secs: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
 export interface CaptureSummary {
   meta: {
     capture_id: string;
@@ -265,6 +272,7 @@ export interface CaptureSummary {
   } | null;
   endpoints: Array<{ ip: string; frames: number; bytes: number }>;
   interest: InterestAnnotations;
+  processing_stats?: ProcessingStats | null;
 }
 
 // V1 Analysis models (kept for compat)
