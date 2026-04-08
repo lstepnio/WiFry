@@ -654,6 +654,7 @@ export interface StbScreenState {
 export interface StbVisionDiag {
   cache_hit: boolean;
   cache_key: string;
+  cache_key_source: string;
   cache_age_ms: number;
   cache_size: number;
   api_call_ms: number;

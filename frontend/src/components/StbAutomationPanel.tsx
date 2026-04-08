@@ -673,11 +673,16 @@ export default function StbAutomationPanel() {
                           )}
                           {/* Vision cache diagnostic badge */}
                           {screenState.diag?.vision && (
-                            <span className={`${badge} ${screenState.diag.vision.cache_hit ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'}`}>
-                              {screenState.diag.vision.cache_hit
-                                ? `CACHE ${Math.round(screenState.diag.vision.cache_age_ms / 1000)}s ago`
-                                : `API ${screenState.diag.vision.api_call_ms}ms`}
-                            </span>
+                            <>
+                              <span className={`${badge} ${screenState.diag.vision.cache_hit ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'}`}>
+                                {screenState.diag.vision.cache_hit
+                                  ? `CACHE ${Math.round(screenState.diag.vision.cache_age_ms / 1000)}s ago`
+                                  : `API ${screenState.diag.vision.api_call_ms}ms`}
+                              </span>
+                              <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>
+                                key:{screenState.diag.vision.cache_key_source}
+                              </span>
+                            </>
                           )}
                         </div>
                         {screenState.state.vision.focused_label && (
@@ -750,7 +755,7 @@ export default function StbAutomationPanel() {
                             <>
                               <div className="mt-1 border-t border-gray-200 pt-1 dark:border-gray-700">vision:</div>
                               <div>&nbsp; cache_hit: <span className={screenState.diag.vision.cache_hit ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}>{String(screenState.diag.vision.cache_hit)}</span></div>
-                              <div>&nbsp; cache_key: {screenState.diag.vision.cache_key}</div>
+                              <div>&nbsp; cache_key: {screenState.diag.vision.cache_key} <span className="text-gray-400">({screenState.diag.vision.cache_key_source})</span></div>
                               <div>&nbsp; cache_age_ms: {screenState.diag.vision.cache_age_ms}</div>
                               <div>&nbsp; cache_size: {screenState.diag.vision.cache_size}</div>
                               <div>&nbsp; api_call_ms: {screenState.diag.vision.api_call_ms}</div>

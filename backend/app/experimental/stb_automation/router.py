@@ -53,7 +53,8 @@ _vision_cache: OrderedDict[str, tuple[float, VisionAnalysis]] = OrderedDict()
 class VisionDiag(BaseModel):
     """Diagnostics for vision cache behavior."""
     cache_hit: bool = False
-    cache_key: str = ""  # visual_hash used as cache key
+    cache_key: str = ""  # actual key used (frame_hash or visual_hash)
+    cache_key_source: str = ""  # "frame" or "adb" — which hash was used
     cache_age_ms: int = 0  # how old the cached result is (0 if fresh)
     cache_size: int = 0  # total entries in cache
     api_call_ms: int = 0  # time for AI API call (0 if cache hit)
@@ -61,41 +62,67 @@ class VisionDiag(BaseModel):
     streamer_running: bool = False
 
 
-async def _get_or_run_vision(cache_key: str) -> tuple[Optional[VisionAnalysis], VisionDiag]:
+async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnalysis], VisionDiag]:
     """Return cached vision result or run a new analysis.
 
-    Caches by visual_hash (volatile) so focus changes invalidate cache.
+    Cache key strategy (in order of preference):
+      1. **frame_hash** — SHA-256 of HDMI JPEG bytes.  Always changes
+         when the screen changes, even on NAF-heavy STBs where the
+         accessibility tree is static.
+      2. **adb_visual_hash** — fallback when HDMI streamer is off.
+
     Returns (vision_result, diagnostics).
     """
     now = time.time()
-    diag = VisionDiag(cache_key=cache_key, cache_size=len(_vision_cache))
+    diag = VisionDiag(cache_size=len(_vision_cache))
+
+    try:
+        from ..video_capture import streamer
+
+        diag.streamer_running = streamer.is_running()
+    except ImportError:
+        diag.streamer_running = False
+
+    # Get HDMI frame (needed for both cache key AND analysis)
+    frame: Optional[bytes] = None
+    if diag.streamer_running:
+        try:
+            from ..video_capture import streamer
+            frame = streamer.get_latest_frame()
+        except ImportError:
+            pass
+
+    # Determine cache key: prefer frame_hash (pixel-level) over ADB hash
+    if frame:
+        cache_key = fp.frame_hash(frame)
+        diag.cache_key_source = "frame"
+    else:
+        cache_key = adb_visual_hash
+        diag.cache_key_source = "adb"
+    diag.cache_key = cache_key
 
     # Check cache
-    if cache_key in _vision_cache:
+    if cache_key and cache_key in _vision_cache:
         ts, cached = _vision_cache[cache_key]
         if now - ts < _VISION_CACHE_TTL:
             _vision_cache.move_to_end(cache_key)
             diag.cache_hit = True
             diag.cache_age_ms = int((now - ts) * 1000)
-            diag.streamer_running = True  # was running when cached
             return cached, diag
         else:
             del _vision_cache[cache_key]
 
-    # Run vision analysis via HDMI frame
+    # Need fresh analysis
+    if not diag.streamer_running:
+        diag.error = "HDMI streamer not running"
+        return None, diag
+
+    if frame is None:
+        diag.error = "No HDMI frame available"
+        return None, diag
+
     try:
-        from ..video_capture import analyzer, streamer
-
-        diag.streamer_running = streamer.is_running()
-
-        if not streamer.is_running():
-            diag.error = "HDMI streamer not running"
-            return None, diag
-
-        frame = streamer.get_latest_frame()
-        if frame is None:
-            diag.error = "No HDMI frame available"
-            return None, diag
+        from ..video_capture import analyzer
 
         t0 = time.time()
         result = await analyzer.analyze_frame(frame_jpeg=frame)
@@ -114,10 +141,11 @@ async def _get_or_run_vision(cache_key: str) -> tuple[Optional[VisionAnalysis], 
             tokens_used=result.tokens_used or 0,
         )
 
-        # Store in cache
-        _vision_cache[cache_key] = (now, vision)
-        if len(_vision_cache) > _VISION_CACHE_MAX:
-            _vision_cache.popitem(last=False)
+        # Store in cache keyed by frame hash
+        if cache_key:
+            _vision_cache[cache_key] = (now, vision)
+            if len(_vision_cache) > _VISION_CACHE_MAX:
+                _vision_cache.popitem(last=False)
         diag.cache_size = len(_vision_cache)
 
         return vision, diag

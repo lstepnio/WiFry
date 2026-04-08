@@ -1,23 +1,27 @@
 """STB_AUTOMATION — Screen fingerprinting for navigation graph identity.
 
-Two fingerprint levels:
+Three fingerprint levels:
 
   1. ``fingerprint()`` — **stable** screen identity for the navigation graph.
      Based on package/activity + structural skeleton (class names + resource
      IDs).  Does NOT change when you scroll a list or different text appears.
 
-  2. ``visual_hash()`` — **volatile** hash of everything visible on screen.
+  2. ``visual_hash()`` — **volatile** hash of ADB UI element data.
      Includes text, bounds, focused/selected state, content_desc.  Changes
-     every time the focused element moves or any text changes.  Used for
-     vision cache invalidation.
+     when the accessibility tree updates — but on NAF-heavy STBs like TiVo,
+     the tree may NOT update when focus moves (highlight is purely visual).
 
-On NAF-heavy STBs (TiVo, etc.) where class_name and resource_id are
-mostly empty, the stable fingerprint degrades to package/activity alone.
-The visual_hash still differentiates screens via bounds + focused state.
+  3. ``frame_hash()`` — **pixel-level** hash of the actual HDMI frame.
+     Always changes when anything visible changes.  Used as the ultimate
+     vision cache key when ADB-based hashes prove static.
+
+On NAF-heavy STBs (TiVo, etc.) where class_name, resource_id, text,
+focused, and selected are all empty/static, ``visual_hash`` degrades to
+the same value across screens.  ``frame_hash`` is the fallback.
 """
 
 import hashlib
-from typing import List
+from typing import List, Optional
 
 from .models import ScreenState, UIElement
 
@@ -32,8 +36,8 @@ def fingerprint(state: ScreenState) -> str:
 def visual_hash(state: ScreenState) -> str:
     """Compute a 12-char hex visual hash (volatile — changes with focus/text).
 
-    Used for vision cache invalidation.  Includes everything the user
-    can see: text, bounds, focused state, content_desc.
+    Used for vision cache invalidation on devices where uiautomator
+    reports focus/text changes.  Falls through to frame_hash on NAF STBs.
     """
     parts = []
     for el in state.ui_elements:
@@ -44,6 +48,21 @@ def visual_hash(state: ScreenState) -> str:
     skeleton = "\n".join(parts)
     composite = f"{state.package}/{state.activity}:{skeleton}"
     return hashlib.sha256(composite.encode()).hexdigest()[:12]
+
+
+def frame_hash(frame_jpeg: Optional[bytes]) -> str:
+    """Compute a 12-char hex hash of the raw HDMI frame bytes.
+
+    This is the ultimate cache key — it ALWAYS changes when anything
+    visible on screen changes, regardless of whether the accessibility
+    tree reports it.  Used for vision cache invalidation on NAF-heavy
+    STBs where visual_hash never changes.
+
+    Returns empty string if no frame is available.
+    """
+    if not frame_jpeg:
+        return ""
+    return hashlib.sha256(frame_jpeg).hexdigest()[:12]
 
 
 def _structural_hash(elements: List[UIElement]) -> str:
