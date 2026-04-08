@@ -409,7 +409,7 @@ async def _analyze_with_openai_v2(capture_id: str, pack: str, prompt: str, model
         import openai
 
         client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
-        model = model_override or "gpt-4o"
+        model = model_override or "gpt-5.4-mini"
 
         response = await client.chat.completions.create(
             model=model,
