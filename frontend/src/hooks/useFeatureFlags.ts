@@ -27,6 +27,7 @@ const FALLBACK_ENABLED: Record<string, boolean> = {
   video_probe: true,
   hdmi_capture: false,
   experimental_video_capture: false, // EXPERIMENTAL_VIDEO_CAPTURE
+  stb_automation: false, // STB_AUTOMATION
   sharing_tunnel: false,
   sharing_fileio: true,
   collaboration: false,

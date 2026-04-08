@@ -56,6 +56,10 @@ DEFAULTS: Dict[str, dict] = {
     "experimental_video_capture": {"enabled": False, "label": "Live Video Stream (Experimental)", "description": "MJPEG live stream from a UVC HDMI capture device. Experimental — may be removed.", "category": "experimental",
         "disabled_reason": "Experimental. Requires Elgato Cam Link 4K (or compatible UVC device) and opencv-python."},
 
+    # STB_AUTOMATION — STB test automation platform
+    "stb_automation": {"enabled": False, "label": "STB Automation (Experimental)", "description": "Automated UI crawling, test flows, anomaly detection for Android STBs via ADB + HDMI vision.", "category": "experimental",
+        "disabled_reason": "Experimental. Requires an Android STB connected via ADB."},
+
     # Sharing features — supported path stays session-centric; live access is opt-in
     "sharing_tunnel": {"enabled": False, "label": "Live Remote Access", "description": "Expose the WiFry UI through a temporary public URL for live troubleshooting.", "category": "sharing",
         "disabled_reason": "Experimental surface. Off by default. Use Session bundles for standard evidence sharing."},
