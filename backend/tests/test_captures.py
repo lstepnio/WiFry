@@ -73,9 +73,13 @@ async def test_analyze_capture_mock(client: AsyncClient):
     data = resp.json()
     assert data["capture_id"] == capture_id
     assert data["summary"]
-    assert len(data["issues"]) > 0
-    assert data["issues"][0]["severity"]
-    assert data["issues"][0]["category"]
+    # V2 response uses 'findings' with evidence and confidence
+    assert len(data["findings"]) > 0
+    assert data["findings"][0]["severity"]
+    assert data["findings"][0]["category"]
+    assert data["findings"][0]["confidence"]
+    assert len(data["findings"][0]["evidence"]) > 0
+    assert data["health_badge"] in ("healthy", "degraded", "unhealthy", "insufficient")
 
 
 async def test_get_analysis(client: AsyncClient):
