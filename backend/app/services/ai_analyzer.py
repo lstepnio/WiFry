@@ -300,11 +300,12 @@ async def analyze_capture(
     else:
         # Build prompt
         prompt = _build_v2_prompt(summary, pack, request)
+        model_override = request.model  # Optional model override
 
         if provider == "anthropic":
-            result = await _analyze_with_anthropic_v2(capture_id, pack, prompt)
+            result = await _analyze_with_anthropic_v2(capture_id, pack, prompt, model_override)
         elif provider == "openai":
-            result = await _analyze_with_openai_v2(capture_id, pack, prompt)
+            result = await _analyze_with_openai_v2(capture_id, pack, prompt, model_override)
         else:
             raise ValueError(f"Unknown AI provider: {provider}")
 
@@ -371,13 +372,13 @@ def _build_v2_prompt(summary: CaptureSummary, pack: str, request: AnalysisReques
 
 # ── Provider Calls ───────────────────────────────────────────────────────────
 
-async def _analyze_with_anthropic_v2(capture_id: str, pack: str, prompt: str) -> AnalysisResultV2:
+async def _analyze_with_anthropic_v2(capture_id: str, pack: str, prompt: str, model_override: str = None) -> AnalysisResultV2:
     """Send analysis to Anthropic Claude API."""
     try:
         import anthropic
 
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        model = "claude-sonnet-4-20250514"
+        model = model_override or "claude-sonnet-4-20250514"
 
         response = await client.messages.create(
             model=model,
@@ -402,13 +403,13 @@ async def _analyze_with_anthropic_v2(capture_id: str, pack: str, prompt: str) ->
         )
 
 
-async def _analyze_with_openai_v2(capture_id: str, pack: str, prompt: str) -> AnalysisResultV2:
+async def _analyze_with_openai_v2(capture_id: str, pack: str, prompt: str, model_override: str = None) -> AnalysisResultV2:
     """Send analysis to OpenAI API."""
     try:
         import openai
 
         client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
-        model = "gpt-4o"
+        model = model_override or "gpt-4o"
 
         response = await client.chat.completions.create(
             model=model,

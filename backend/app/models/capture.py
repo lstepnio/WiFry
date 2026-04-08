@@ -340,6 +340,7 @@ class AnalysisRequest(BaseModel):
     """Request to run AI analysis on a capture."""
 
     provider: Optional[str] = Field(None, description="anthropic or openai (uses default if omitted)")
+    model: Optional[str] = Field(None, description="Model override (e.g. gpt-4o, gpt-5-nano)")
     prompt: str = Field(
         "Analyze this capture for network issues, retransmissions, latency problems, and protocol errors",
         description="Analysis prompt / focus",
