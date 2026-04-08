@@ -16,14 +16,15 @@ interface FeatureFlag {
 
 type Flags = Record<string, FeatureFlag>;
 
-const CATEGORY_ORDER = ['core', 'analysis', 'tools', 'advanced', 'sharing', 'fun'];
-const EXPERIMENTAL_FLAGS = new Set(['sharing_tunnel', 'collaboration']);
+const CATEGORY_ORDER = ['core', 'analysis', 'tools', 'advanced', 'sharing', 'experimental', 'fun'];
+const EXPERIMENTAL_FLAGS = new Set(['sharing_tunnel', 'collaboration', 'experimental_video_capture']);
 const CATEGORY_LABELS: Record<string, string> = {
   core: 'Core Features',
   analysis: 'Analysis',
   tools: 'Tools',
   advanced: 'Advanced (Hardware Required)',
   sharing: 'Sharing & Remote Access',
+  experimental: 'Experimental',
   fun: 'Easter Eggs',
 };
 
