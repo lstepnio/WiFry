@@ -214,6 +214,7 @@ if ! id "$WIFRY_USER" &>/dev/null; then
     info "Created user '$WIFRY_USER'"
 fi
 usermod -aG netdev "$WIFRY_USER" 2>/dev/null || true
+usermod -aG video "$WIFRY_USER" 2>/dev/null || true   # EXPERIMENTAL_VIDEO_CAPTURE — UVC device access
 
 # Create all data directories
 for dir in captures reports sessions segments bundles annotations \
