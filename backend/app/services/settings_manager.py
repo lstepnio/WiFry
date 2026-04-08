@@ -35,6 +35,8 @@ def _load() -> dict:
         settings.openai_api_key = _user_settings["openai_api_key"]
     if "ai_provider" in _user_settings:
         settings.ai_provider = _user_settings["ai_provider"]
+    if "ai_model" in _user_settings:
+        settings.ai_model = _user_settings["ai_model"]
 
     return _user_settings
 
@@ -53,6 +55,7 @@ def get_all() -> dict:
         "openai_api_key": _mask(s.get("openai_api_key", "")),
         "openai_api_key_set": bool(s.get("openai_api_key")),
         "ai_provider": s.get("ai_provider", "anthropic"),
+        "ai_model": s.get("ai_model", ""),
         "git_repo_url": s.get("git_repo_url", ""),
         "web_password_set": bool(s.get("web_password")),
         "ap_ssid": s.get("ap_ssid", settings.ap_ssid),
@@ -67,7 +70,7 @@ def update(updates: dict) -> dict:
     s = _load()
     changed_keys = []
 
-    for key in ["anthropic_api_key", "openai_api_key", "ai_provider",
+    for key in ["anthropic_api_key", "openai_api_key", "ai_provider", "ai_model",
                  "git_repo_url", "ap_ssid", "ap_password", "ap_channel", "ap_band"]:
         if key in updates and updates[key] is not None:
             # Don't overwrite with masked values
@@ -83,6 +86,8 @@ def update(updates: dict) -> dict:
         settings.openai_api_key = s["openai_api_key"]
     if "ai_provider" in s:
         settings.ai_provider = s["ai_provider"]
+    if "ai_model" in s:
+        settings.ai_model = s["ai_model"]
 
     _user_settings.update(s)
     _save()

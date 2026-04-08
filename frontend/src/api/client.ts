@@ -326,6 +326,14 @@ export async function getSettings(): Promise<SystemSettings> {
   return request('/system/settings');
 }
 
+export async function getAiModels(provider?: string): Promise<{
+  provider: string;
+  models: Array<{ id: string; name: string; tier: string }>;
+}> {
+  const params = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+  return request(`/system/ai-models${params}`);
+}
+
 export async function getFeatureFlags(): Promise<FeatureFlags> {
   return request('/system/features');
 }

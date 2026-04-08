@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     ai_provider: str = "anthropic"  # "anthropic" or "openai"
+    ai_model: str = ""  # Empty = provider default (gpt-5.4-mini / claude-sonnet-4-20250514)
 
     # Capture v2
     capture_max_concurrent: int = 2

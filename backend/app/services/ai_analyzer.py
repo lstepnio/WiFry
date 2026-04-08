@@ -300,7 +300,8 @@ async def analyze_capture(
     else:
         # Build prompt
         prompt = _build_v2_prompt(summary, pack, request)
-        model_override = request.model  # Optional model override
+        # Model priority: explicit request > saved setting > provider default
+        model_override = request.model or settings.ai_model or None
 
         if provider == "anthropic":
             result = await _analyze_with_anthropic_v2(capture_id, pack, prompt, model_override)
@@ -413,7 +414,7 @@ async def _analyze_with_openai_v2(capture_id: str, pack: str, prompt: str, model
 
         response = await client.chat.completions.create(
             model=model,
-            max_tokens=4096,
+            max_completion_tokens=8192,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -421,8 +422,15 @@ async def _analyze_with_openai_v2(capture_id: str, pack: str, prompt: str, model
             response_format={"type": "json_object"},
         )
 
-        content = response.choices[0].message.content or ""
+        choice = response.choices[0]
+        content = choice.message.content or ""
         tokens = response.usage.total_tokens if response.usage else 0
+        finish = choice.finish_reason or "unknown"
+
+        if not content:
+            logger.warning("OpenAI returned empty content (model=%s, finish_reason=%s, tokens=%d)", model, finish, tokens)
+        elif finish != "stop":
+            logger.warning("OpenAI finish_reason=%s (model=%s, content_len=%d)", finish, model, len(content))
 
         return _parse_v2_response(capture_id, pack, content, "openai", model, tokens)
 

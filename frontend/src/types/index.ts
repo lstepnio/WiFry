@@ -438,9 +438,16 @@ export interface SystemSettings {
   ap_channel: number;
   ap_band: string;
   ai_provider: string;
+  ai_model: string;
   anthropic_api_key_set: boolean;
   openai_api_key_set: boolean;
   dns_enabled: boolean;
+}
+
+export interface AiModelInfo {
+  id: string;
+  name: string;
+  tier: string;
 }
 
 export interface FeatureFlag {

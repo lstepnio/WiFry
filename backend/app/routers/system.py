@@ -121,6 +121,112 @@ async def update_settings(updates: dict):
     return settings_manager.update(updates)
 
 
+@router.get("/ai-models")
+async def list_ai_models(provider: str = ""):
+    """List available AI models for the given (or configured) provider.
+
+    Fetches live model lists from the OpenAI / Anthropic API and filters
+    to models suitable for analysis (chat-capable, non-embedding, non-audio).
+    Falls back to a curated static list if the API call fails.
+    """
+    from ..services import settings_manager
+    settings_manager._load()  # ensure keys are current
+
+    target = provider or settings.ai_provider or "openai"
+    models: list[dict] = []
+
+    if target == "openai":
+        models = await _fetch_openai_models()
+    elif target == "anthropic":
+        models = await _fetch_anthropic_models()
+
+    return {"provider": target, "models": models}
+
+
+async def _fetch_openai_models() -> list[dict]:
+    """Fetch and filter OpenAI models suitable for chat completions."""
+    # Curated fallback list — always available
+    FALLBACK = [
+        {"id": "gpt-5.4-nano", "name": "GPT-5.4 Nano", "tier": "nano"},
+        {"id": "gpt-5.4-mini", "name": "GPT-5.4 Mini", "tier": "mini"},
+        {"id": "gpt-5.4", "name": "GPT-5.4", "tier": "standard"},
+        {"id": "gpt-4.1-nano", "name": "GPT-4.1 Nano", "tier": "nano"},
+        {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini", "tier": "mini"},
+        {"id": "gpt-4.1", "name": "GPT-4.1", "tier": "standard"},
+    ]
+
+    if not settings.openai_api_key:
+        return FALLBACK
+
+    try:
+        import openai
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        response = await client.models.list()
+
+        # Filter to text chat models only — exclude audio, image, realtime,
+        # transcribe, search, codex, TTS, old 3.5, and dated snapshots
+        EXCLUDE_CONTAINS = (
+            "realtime", "audio", "transcribe", "search", "image",
+            "tts", "codex", "diarize", "chat-latest",
+        )
+        EXCLUDE_PREFIXES = (
+            "text-", "dall-e", "whisper", "tts-", "davinci",
+            "babbage", "embedding", "moderation", "gpt-3.5",
+        )
+        chat_models = []
+        for m in response.data:
+            mid = m.id.lower()
+            if any(mid.startswith(p) for p in EXCLUDE_PREFIXES):
+                continue
+            if any(kw in mid for kw in EXCLUDE_CONTAINS):
+                continue
+            if not mid.startswith(("gpt-", "o1", "o3", "o4")):
+                continue
+            # Skip dated snapshots (e.g. gpt-5.4-2026-03-05) — keep only aliases
+            # Dated models have format: name-YYYY-MM-DD
+            import re
+            if re.search(r'-\d{4}-\d{2}-\d{2}$', mid):
+                continue
+            # Skip explicit old models
+            if mid in ("gpt-4", "gpt-4-0613", "gpt-4-turbo", "gpt-4-turbo-2024-04-09",
+                        "gpt-4o", "gpt-4o-2024-05-13", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20",
+                        "gpt-4o-mini", "gpt-4o-mini-2024-07-18"):
+                continue
+            # Determine tier from model name
+            tier = "standard"
+            if "nano" in mid:
+                tier = "nano"
+            elif "mini" in mid:
+                tier = "mini"
+            elif "pro" in mid:
+                tier = "pro"
+            chat_models.append({"id": m.id, "name": m.id, "tier": tier})
+
+        # Sort: group by family (gpt-5.4, gpt-4.1, o-series), then by tier
+        TIER_ORDER = {"nano": 0, "mini": 1, "standard": 2, "pro": 3}
+        chat_models.sort(key=lambda x: (x["id"].split("-")[0], TIER_ORDER.get(x["tier"], 2), x["id"]))
+
+        return chat_models if chat_models else FALLBACK
+
+    except Exception as e:
+        logger.warning("Failed to fetch OpenAI models: %s", e)
+        return FALLBACK
+
+
+async def _fetch_anthropic_models() -> list[dict]:
+    """Return available Anthropic models.
+
+    The Anthropic API doesn't have a public list-models endpoint,
+    so we return a curated list of current models.
+    """
+    return [
+        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "tier": "standard"},
+        {"id": "claude-haiku-4-20250414", "name": "Claude Haiku 4", "tier": "mini"},
+        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "tier": "standard"},
+        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "tier": "mini"},
+    ]
+
+
 @router.post("/settings/password")
 async def change_password(current: str = "", new_password: str = ""):
     """Change the web UI password."""
