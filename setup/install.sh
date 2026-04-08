@@ -116,9 +116,43 @@ apt-get install -y -qq \
     hping3 iperf3 \
     wireguard-tools openvpn \
     strongswan strongswan-swanctl \
-    curl jq rsync
+    curl jq rsync \
+    unattended-upgrades apt-listchanges rpi-eeprom
 
 info "System packages installed."
+
+step "Upgrading system packages"
+
+apt-get dist-upgrade -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+apt-get autoremove -y -qq
+info "System packages upgraded."
+
+step "Updating RPi firmware"
+
+rpi-eeprom-update -a 2>/dev/null || warn "RPi firmware update skipped (not available on this platform)"
+
+step "Configuring automatic security updates"
+
+export DEBIAN_FRONTEND=noninteractive
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPG'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPG
+
+cat > /etc/apt/apt.conf.d/52wifry-unattended-upgrades <<'UNATTENDED'
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Raspbian,codename=${distro_codename}";
+    "origin=Raspberry Pi Foundation,codename=${distro_codename}";
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UNATTENDED
+
+systemctl enable unattended-upgrades 2>/dev/null || true
+info "Automatic security updates configured."
 
 # ─── Binary dependencies ─────────────────────────────────────────────
 
