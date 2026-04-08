@@ -17,6 +17,7 @@ import StreamDetail from '../StreamDetail';
 import StreamMonitor from '../StreamMonitor';
 import SystemInfo from '../SystemInfo';
 import TeleportPanel from '../TeleportPanel';
+import ExperimentalVideoStream from '../ExperimentalVideoStream'; // EXPERIMENTAL_VIDEO_CAPTURE
 import VideoProbe from '../VideoProbe';
 import WifiImpairmentPanel from '../WifiImpairmentPanel';
 import WifiScanner from '../WifiScanner';
@@ -115,6 +116,8 @@ export default function DashboardPanels({
           <HwValidationPanel />
           <WifiScanner />
           <SpeedTest />
+          {/* EXPERIMENTAL_VIDEO_CAPTURE — Only shown when flag is enabled */}
+          {isEnabled('experimental_video_capture') && <ExperimentalVideoStream />}
         </div>
       )}
       {currentSystemSubTab === 'settings' && (
