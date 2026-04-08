@@ -1,8 +1,8 @@
 """Capture retention policy enforcement.
 
-Enforces limits from the RPi 5 performance guide:
-- Max 20 captures
-- Max 500 MB total pcap storage
+Enforces limits:
+- Max 25 captures
+- Max storage = 20% of free space on the captures partition (computed at startup)
 - Max 7 days age
 - Session-linked captures exempt while session is active
 
@@ -12,6 +12,7 @@ daily maintenance schedule.
 
 import asyncio
 import logging
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -22,9 +23,45 @@ from . import storage
 logger = logging.getLogger(__name__)
 
 # Retention limits
-MAX_CAPTURES = 20
-MAX_STORAGE_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_CAPTURES = 25
 MAX_AGE_DAYS = 7
+_RETENTION_FREE_SPACE_PCT = 0.20  # Use up to 20% of free partition space
+_MIN_STORAGE_BYTES = 200 * 1024 * 1024  # Floor: at least 200 MB
+_MAX_STORAGE_BYTES: int | None = None  # Computed at startup
+
+
+def _compute_max_storage() -> int:
+    """Compute max capture storage as 20% of free space on the captures partition."""
+    try:
+        captures_dir = _captures_dir()
+        captures_dir.mkdir(parents=True, exist_ok=True)
+        usage = shutil.disk_usage(captures_dir)
+        # Free space includes what captures already use, so add current capture usage
+        current_capture_bytes = sum(
+            f.stat().st_size for f in captures_dir.iterdir() if f.is_file()
+        )
+        available = usage.free + current_capture_bytes
+        computed = int(available * _RETENTION_FREE_SPACE_PCT)
+        result = max(computed, _MIN_STORAGE_BYTES)
+        logger.info(
+            "Retention storage limit: %d MB (%.0f%% of %.1f GB free, floor %d MB)",
+            result // (1024 * 1024),
+            _RETENTION_FREE_SPACE_PCT * 100,
+            available / (1024 ** 3),
+            _MIN_STORAGE_BYTES // (1024 * 1024),
+        )
+        return result
+    except Exception as e:
+        logger.warning("Failed to compute partition free space, using 500 MB default: %s", e)
+        return 500 * 1024 * 1024
+
+
+def get_max_storage_bytes() -> int:
+    """Return the computed max storage, initializing on first call."""
+    global _MAX_STORAGE_BYTES
+    if _MAX_STORAGE_BYTES is None:
+        _MAX_STORAGE_BYTES = _compute_max_storage()
+    return _MAX_STORAGE_BYTES
 
 
 def _captures_dir() -> Path:
@@ -115,9 +152,10 @@ async def enforce_retention() -> dict:
             stats["pruned_count"] += 1
 
     # 3. Size-based pruning
+    max_bytes = get_max_storage_bytes()
     remaining = [c for c in captures if c[0] not in {p[0] for p in to_prune}]
     total_size = sum(c[3] for c in remaining)
-    while total_size > MAX_STORAGE_BYTES and remaining:
+    while total_size > max_bytes and remaining:
         oldest = remaining.pop(0)
         cid = oldest[0]
         if not _is_session_linked(cid):
@@ -171,13 +209,14 @@ async def get_storage_usage() -> dict:
     """Get current capture storage usage."""
     captures = _get_capture_files()
     total_bytes = sum(c[3] for c in captures)
+    max_bytes = get_max_storage_bytes()
 
     return {
         "capture_count": len(captures),
         "total_bytes": total_bytes,
         "total_mb": round(total_bytes / 1024 / 1024, 1),
         "max_captures": MAX_CAPTURES,
-        "max_storage_mb": MAX_STORAGE_BYTES // (1024 * 1024),
+        "max_storage_mb": max_bytes // (1024 * 1024),
         "max_age_days": MAX_AGE_DAYS,
-        "usage_pct": round(total_bytes / MAX_STORAGE_BYTES * 100, 1) if MAX_STORAGE_BYTES > 0 else 0,
+        "usage_pct": round(total_bytes / max_bytes * 100, 1) if max_bytes > 0 else 0,
     }

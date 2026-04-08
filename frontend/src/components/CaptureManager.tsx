@@ -319,7 +319,11 @@ export default function CaptureManager({
           {completedCaptures.map((c) => (
             <div
               key={c.id}
-              className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800"
+              role="button"
+              tabIndex={0}
+              onClick={() => onAnalyze(c.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAnalyze(c.id); } }}
+              className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 transition-colors hover:border-blue-300 hover:bg-blue-50/50 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-blue-700 dark:hover:bg-blue-900/20"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -351,19 +355,14 @@ export default function CaptureManager({
                   <a
                     href={`/api/v1/captures/${c.id}/download`}
                     download={`${c.name || c.id}.pcap`}
+                    onClick={(e) => e.stopPropagation()}
                     className="rounded border border-blue-300 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400"
                   >
                     Download
                   </a>
                 )}
                 <button
-                  onClick={() => onAnalyze(c.id)}
-                  className="rounded bg-purple-600 px-3 py-1 text-xs font-medium text-white hover:bg-purple-700"
-                >
-                  {c.has_analysis ? 'View Analysis' : 'Analyze'}
-                </button>
-                <button
-                  onClick={() => handleDelete(c.id)}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }}
                   className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
                 >
                   Delete

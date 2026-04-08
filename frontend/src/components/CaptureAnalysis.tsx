@@ -60,11 +60,13 @@ export default function CaptureAnalysis({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+  const [aiProvider, setAiProvider] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch('/api/v1/system/settings').then(r => r.json()).then((s: SystemSettings) => {
       setAiConfigured(s.anthropic_api_key_set || s.openai_api_key_set);
+      setAiProvider(s.ai_provider === 'openai' ? 'OpenAI' : s.ai_provider === 'anthropic' ? 'Claude' : 'AI');
     }).catch(() => setAiConfigured(false));
   }, []);
 
@@ -139,7 +141,7 @@ export default function CaptureAnalysis({
             &larr; Back
           </button>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Capture Analysis
+            AI Analysis
           </h2>
           {result && (
             <span className={`rounded-full px-3 py-1 text-sm font-medium ${HEALTH_STYLES[result.health_badge]?.bg || ''} ${HEALTH_STYLES[result.health_badge]?.text || ''}`}>
@@ -151,9 +153,9 @@ export default function CaptureAnalysis({
           onClick={runAnalysis}
           disabled={loading || aiConfigured === false}
           className="rounded-lg bg-purple-600 px-5 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
-          title={aiConfigured === false ? 'Configure an AI API key in System > App Settings' : ''}
+          title={aiConfigured === false ? 'Configure an AI API key in System > App Settings' : 'Send capture data to AI for evidence-based network diagnosis'}
         >
-          {loading ? 'Analyzing...' : result ? 'Re-analyze' : 'Run Analysis'}
+          {loading ? '\u2728 Analyzing...' : result ? '\u2728 Re-analyze with AI' : '\u2728 Run AI Analysis'}
         </button>
       </div>
 
@@ -165,8 +167,8 @@ export default function CaptureAnalysis({
 
       {loading && (
         <div className="py-12 text-center text-gray-500">
-          <div className="mb-3 text-2xl">Analyzing capture data...</div>
-          <p className="text-sm">Extracting statistics and sending to AI for evidence-based analysis.</p>
+          <div className="mb-3 text-2xl">{'\u2728'} AI Analysis in progress...</div>
+          <p className="text-sm">Sending capture statistics to {aiProvider || 'AI'} for evidence-based network diagnosis.</p>
           <p className="mt-1 text-xs text-gray-400">You can leave this page — analysis runs in the background.</p>
         </div>
       )}
@@ -238,8 +240,9 @@ export default function CaptureAnalysis({
 
       {!result && !loading && !error && aiConfigured !== false && (
         <div className="py-12 text-center text-gray-500">
-          <p className="mb-2 text-lg">No analysis yet</p>
-          <p className="text-sm">Click &ldquo;Run Analysis&rdquo; for evidence-based AI diagnosis</p>
+          <p className="mb-2 text-lg">No AI analysis yet</p>
+          <p className="text-sm">Click <span className="font-medium text-purple-400">{'\u2728'} Run AI Analysis</span> to send capture data to {aiProvider || 'AI'} for evidence-based network diagnosis.</p>
+          <p className="mt-1 text-xs text-gray-400">The tshark statistics above are always available — AI analysis adds findings, severity ratings, and recommendations.</p>
         </div>
       )}
     </div>
@@ -352,6 +355,19 @@ function StatsDashboard({ summary }: { summary: CaptureSummary }) {
           <span>{summary.meta.duration_secs.toFixed(1)}s</span>
         </div>
       </div>
+
+      {summary.processing_stats && (
+        <div className="mb-4 flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <span className="font-medium text-gray-600 dark:text-gray-300">tshark Summary</span>
+          <span>Processing: {summary.processing_stats.processing_secs.toFixed(1)}s</span>
+          {summary.processing_stats.queue_wait_secs > 0.1 && (
+            <span>Queue: {summary.processing_stats.queue_wait_secs.toFixed(1)}s</span>
+          )}
+          {summary.processing_stats.completed_at && (
+            <span>Completed: {new Date(summary.processing_stats.completed_at).toLocaleString()}</span>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Protocol Breakdown */}

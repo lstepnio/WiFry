@@ -7,7 +7,7 @@ RPi 5 friendliness.
 Design principles from rpi5-performance-guide.md:
 - nice -n 10 / ionice -c2 -n7 on all post-processing
 - Adaptive per-query timeout: 60s base, scales with file size
-- Sequential execution (one tshark at a time) to avoid RAM spikes
+- Configurable concurrency (default 1 = sequential to avoid RAM spikes)
 - Page cache pre-warming: limited to <100 MB pcaps
 - Minimised tshark passes: TCP health in single pass (not 8)
 """
@@ -17,6 +17,8 @@ import json
 import logging
 import re
 import statistics
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,6 +38,7 @@ from ..models.capture import (
     IcmpSummary,
     InterestAnnotations,
     InterestWindow,
+    ProcessingStats,
     ProtocolBreakdown,
     ProtocolEntry,
     TcpHealth,
@@ -95,7 +98,7 @@ async def _tshark_query(pcap_path: str, *args: str, timeout: float = 0) -> Comma
 
     # Use nice + ionice for lower priority on RPi
     cmd_args = [
-        "nice", "-n", "10",
+        "nice", "-n", str(settings.tshark_nice),
         "ionice", "-c2", "-n7",
         "tshark", "-r", pcap_path,
         *args,
@@ -147,11 +150,29 @@ async def generate_summary(
         pcap.stat().st_size / (1024 * 1024),
         timeout,
     )
+    t_queue = time.monotonic()
     async with _post_process_semaphore:
-        return await asyncio.wait_for(
+        t_start = time.monotonic()
+        queue_wait = t_start - t_queue
+        started_at = datetime.now(timezone.utc).isoformat()
+
+        summary = await asyncio.wait_for(
             _run_pipeline(capture_id, pcap_path, pack, meta),
             timeout=timeout,
         )
+
+        t_end = time.monotonic()
+        summary.processing_stats = ProcessingStats(
+            queue_wait_secs=round(queue_wait, 2),
+            processing_secs=round(t_end - t_start, 2),
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        logger.info(
+            "Summary pipeline complete for %s: %.1fs processing, %.1fs queue wait",
+            capture_id, t_end - t_start, queue_wait,
+        )
+        return summary
 
 
 async def _run_pipeline(
@@ -160,7 +181,13 @@ async def _run_pipeline(
     pack: str,
     meta: Optional[CaptureMeta],
 ) -> CaptureSummary:
-    """Execute the extraction pipeline sequentially."""
+    """Execute the extraction pipeline with configurable concurrency.
+
+    When tshark_concurrency=1 (default), queries run sequentially — identical
+    to the original behavior and safe for memory-constrained RPi devices.
+    Higher values run multiple tshark processes in parallel for faster
+    processing on systems with sufficient RAM.
+    """
     if not meta:
         meta = CaptureMeta(capture_id=capture_id, pack=pack)
 
@@ -177,38 +204,63 @@ async def _run_pipeline(
 
     summary = CaptureSummary(meta=meta)
 
-    # Run queries sequentially to avoid RAM spikes
+    # Gate concurrency with a local semaphore
+    query_sem = asyncio.Semaphore(settings.tshark_concurrency)
+
+    async def gated(coro):
+        async with query_sem:
+            return await coro
+
+    # Build task dict — all queries are independent of each other
+    tasks: Dict[str, asyncio.Task] = {}
     if "protocol" in query_set:
-        summary.protocol_breakdown = await _extract_protocol_hierarchy(pcap_path)
-
+        tasks["protocol"] = gated(_extract_protocol_hierarchy(pcap_path))
     if "tcp" in query_set:
-        summary.tcp_health = await _extract_tcp_health(pcap_path)
-        convs = await _extract_conversations(pcap_path)
-        summary.conversations = convs[:20]  # Cap at 20 conversations
-
-    if "io" in query_set:
-        summary.throughput = await _extract_throughput(pcap_path)
-
+        tasks["tcp"] = gated(_extract_tcp_health(pcap_path))
+        tasks["conversations"] = gated(_extract_conversations(pcap_path))
+    if "io" in query_set or "throughput" in query_set:
+        tasks["throughput"] = gated(_extract_throughput(pcap_path))
     if "expert" in query_set:
-        summary.expert = await _extract_expert_info(pcap_path)
-
+        tasks["expert"] = gated(_extract_expert_info(pcap_path))
     if "dns" in query_set:
-        summary.dns = await _extract_dns(pcap_path)
-
+        tasks["dns"] = gated(_extract_dns(pcap_path))
     if "icmp" in query_set:
-        summary.icmp = await _extract_icmp(pcap_path)
-
+        tasks["icmp"] = gated(_extract_icmp(pcap_path))
     if "endpoints" in query_set:
-        endpoints = await _extract_endpoints(pcap_path)
-        summary.endpoints = endpoints[:30]  # Cap at 30 endpoints
-
+        tasks["endpoints"] = gated(_extract_endpoints(pcap_path))
     if "tls" in query_set:
-        summary.tls = await _extract_tls(pcap_path)
+        tasks["tls"] = gated(_extract_tls(pcap_path))
 
-    if "throughput" in query_set and summary.throughput is None:
-        summary.throughput = await _extract_throughput(pcap_path)
+    # Run all queries (semaphore limits actual parallelism)
+    keys = list(tasks.keys())
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    result_map = dict(zip(keys, results))
 
-    # Run interest detection
+    # Assign results, skipping any that raised exceptions
+    for name, result in result_map.items():
+        if isinstance(result, Exception):
+            logger.warning("Query '%s' failed for capture %s: %s", name, capture_id, result)
+            continue
+        if name == "protocol":
+            summary.protocol_breakdown = result
+        elif name == "tcp":
+            summary.tcp_health = result
+        elif name == "conversations":
+            summary.conversations = result[:20]
+        elif name == "throughput":
+            summary.throughput = result
+        elif name == "expert":
+            summary.expert = result
+        elif name == "dns":
+            summary.dns = result
+        elif name == "icmp":
+            summary.icmp = result
+        elif name == "endpoints":
+            summary.endpoints = result[:30]
+        elif name == "tls":
+            summary.tls = result
+
+    # Run interest detection (needs full summary)
     try:
         summary.interest = _detect_interest(summary, pack)
     except Exception as e:

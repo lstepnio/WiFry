@@ -303,6 +303,15 @@ class InterestAnnotations(BaseModel):
     health_badge: HealthBadge = HealthBadge.INSUFFICIENT
 
 
+class ProcessingStats(BaseModel):
+    """Timing stats for tshark pipeline processing."""
+
+    queue_wait_secs: float = 0.0
+    processing_secs: float = 0.0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
 class CaptureSummary(BaseModel):
     """Structured capture statistics — the single source of truth for
     both the stats dashboard and AI analysis input.
@@ -322,6 +331,7 @@ class CaptureSummary(BaseModel):
     endpoints: List[EndpointEntry] = Field(default_factory=list)
     tls: Optional[TlsSummary] = None
     interest: InterestAnnotations = Field(default_factory=InterestAnnotations)
+    processing_stats: Optional[ProcessingStats] = None
 
 
 # ── V1 Analysis Models (kept for backward compatibility) ─────────────────────
