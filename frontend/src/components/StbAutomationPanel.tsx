@@ -2,7 +2,8 @@
  * STB_AUTOMATION — STB Test Automation Panel.
  *
  * Provides:
- * - Device status + logcat monitor controls
+ * - ADB device discovery and selection (reuses existing ADB device API)
+ * - Live HDMI video stream (MJPEG from video capture module)
  * - D-pad remote with navigate-and-observe (settle detection)
  * - Screen state display (activity, focused element, fingerprint)
  * - Crawl controls (start/stop BFS, model stats)
@@ -15,9 +16,11 @@
  * Removal: delete this file and its references in DashboardPanels.tsx + config.ts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api/client';
+import { useApi } from '../hooks/useApi';
 import type {
+  AdbDevice,
   StbChaosResult,
   StbCrawlStatus,
   StbDetectedAnomaly,
@@ -43,6 +46,7 @@ const btnGhost = `${btnBase} rounded border border-gray-300 px-3 py-1.5 text-xs 
 // D-pad button styles
 const dpadBtn = `${btnBase} h-10 w-12 bg-gray-700 text-sm text-white hover:bg-gray-600`;
 const dpadOk = `${btnBase} h-10 w-12 bg-blue-600 text-xs text-white hover:bg-blue-700`;
+const dpadSmall = `${btnBase} h-8 w-14 bg-gray-700 text-[10px] text-white hover:bg-gray-600`;
 
 const STATE_COLORS: Record<string, string> = {
   idle: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
@@ -59,22 +63,57 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
 };
 
+const DEVICE_STATE_COLORS: Record<string, string> = {
+  connected: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
+  disconnected: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  offline: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300',
+  unauthorized: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+};
+
 type PanelSection = 'remote' | 'crawl' | 'flows' | 'chaos' | 'nl';
 
 export default function StbAutomationPanel() {
-  // ── State ──────────────────────────────────────────────────────────
-  const [serial, setSerial] = useState('');
+  // ── Device State ───────────────────────────────────────────────────
+  const [selectedSerial, setSelectedSerial] = useState<string | null>(null);
+  const [connectIp, setConnectIp] = useState('');
+  const [connecting, setConnecting] = useState(false);
   const [activeSection, setActiveSection] = useState<PanelSection>('remote');
 
-  // Status
-  const [status, setStatus] = useState<StbStatus | null>(null);
-  const [events, setEvents] = useState<StbLogcatEvent[]>([]);
-  const [anomalies, setAnomalies] = useState<StbDetectedAnomaly[]>([]);
+  // ADB device discovery (polls every 5s)
+  const deviceFetcher = useCallback((_signal: AbortSignal) => api.getAdbDevices(), []);
+  const { data: devices, refresh: refreshDevices } = useApi<AdbDevice[]>(deviceFetcher, 5000);
+
+  // STB status (polls every 5s, only when device selected)
+  const stbFetcher = useCallback(
+    async (_signal: AbortSignal) => {
+      if (!selectedSerial) return null;
+      const [s, ev, an] = await Promise.all([
+        api.getStbStatus(),
+        api.getStbEvents(10),
+        api.getStbAnomalies(10),
+      ]);
+      return { status: s, events: ev, anomalies: an };
+    },
+    [selectedSerial],
+  );
+  const { data: stbData, refresh: refreshStb } = useApi<{
+    status: StbStatus;
+    events: StbLogcatEvent[];
+    anomalies: StbDetectedAnomaly[];
+  } | null>(stbFetcher, selectedSerial ? 5000 : undefined);
+
+  const status = stbData?.status ?? null;
+  const events = stbData?.events ?? [];
+  const anomalies = stbData?.anomalies ?? [];
 
   // Screen state
   const [screenState, setScreenState] = useState<StbScreenStateResponse | null>(null);
   const [lastNav, setLastNav] = useState<StbNavigateResponse | null>(null);
   const [navigating, setNavigating] = useState(false);
+
+  // HDMI stream
+  const [videoStreaming, setVideoStreaming] = useState(false);
+  const videoCheckRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   // Crawl
   const [crawlStatus, setCrawlStatus] = useState<StbCrawlStatus | null>(null);
@@ -97,40 +136,54 @@ export default function StbAutomationPanel() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // ── Refresh ────────────────────────────────────────────────────────
-
-  const refresh = useCallback(async () => {
-    if (!serial) return;
-    try {
-      const [s, ev, an] = await Promise.all([
-        api.getStbStatus(),
-        api.getStbEvents(10),
-        api.getStbAnomalies(10),
-      ]);
-      setStatus(s);
-      setEvents(ev);
-      setAnomalies(an);
-      setError(null);
-    } catch {
-      // silent on poll failure
-    }
-  }, [serial]);
+  // ── HDMI Stream Status ─────────────────────────────────────────────
 
   useEffect(() => {
-    if (!serial) return;
-    refresh();
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
-  }, [serial, refresh]);
+    const check = async () => {
+      try {
+        const s = await api.getVideoStatus();
+        setVideoStreaming(s.streaming);
+      } catch {
+        setVideoStreaming(false);
+      }
+    };
+    check();
+    videoCheckRef.current = setInterval(check, 5000);
+    return () => clearInterval(videoCheckRef.current);
+  }, []);
+
+  // ── Device Connection ──────────────────────────────────────────────
+
+  const handleConnect = async () => {
+    if (!connectIp) return;
+    setConnecting(true);
+    setError(null);
+    try {
+      await api.connectAdbDevice(connectIp);
+      setConnectIp('');
+      await refreshDevices();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Connection failed');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleSelectDevice = (serial: string) => {
+    setSelectedSerial(serial);
+    setScreenState(null);
+    setLastNav(null);
+    setError(null);
+  };
 
   // ── Monitor ────────────────────────────────────────────────────────
 
   const handleStartMonitor = async () => {
-    if (!serial) return;
+    if (!selectedSerial) return;
     setLoading(true);
     try {
-      await api.startStbMonitor(serial);
-      await refresh();
+      await api.startStbMonitor(selectedSerial);
+      await refreshStb();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start monitor');
     } finally {
@@ -142,7 +195,7 @@ export default function StbAutomationPanel() {
     setLoading(true);
     try {
       await api.stopStbMonitor();
-      await refresh();
+      await refreshStb();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to stop monitor');
     } finally {
@@ -153,11 +206,11 @@ export default function StbAutomationPanel() {
   // ── Navigation ─────────────────────────────────────────────────────
 
   const handleNavigate = async (action: string) => {
-    if (!serial || navigating) return;
+    if (!selectedSerial || navigating) return;
     setNavigating(true);
     setError(null);
     try {
-      const result = await api.stbNavigate(serial, action);
+      const result = await api.stbNavigate(selectedSerial, action);
       setLastNav(result);
       setScreenState({
         state: result.post_state,
@@ -171,10 +224,10 @@ export default function StbAutomationPanel() {
   };
 
   const handleReadState = async () => {
-    if (!serial) return;
+    if (!selectedSerial) return;
     setLoading(true);
     try {
-      const s = await api.getStbState(serial);
+      const s = await api.getStbState(selectedSerial);
       setScreenState(s);
       setError(null);
     } catch (e) {
@@ -184,12 +237,38 @@ export default function StbAutomationPanel() {
     }
   };
 
+  // ── HDMI Stream Control ────────────────────────────────────────────
+
+  const handleStartStream = async () => {
+    setLoading(true);
+    try {
+      await api.startVideoStream();
+      setVideoStreaming(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start stream');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStopStream = async () => {
+    setLoading(true);
+    try {
+      await api.stopVideoStream();
+      setVideoStreaming(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to stop stream');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ── Crawl ──────────────────────────────────────────────────────────
 
   const handleStartCrawl = async () => {
-    if (!serial) return;
+    if (!selectedSerial) return;
     try {
-      const s = await api.startStbCrawl({ serial });
+      const s = await api.startStbCrawl({ serial: selectedSerial });
       setCrawlStatus(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start crawl');
@@ -207,22 +286,24 @@ export default function StbAutomationPanel() {
 
   // ── Flows ──────────────────────────────────────────────────────────
 
-  const refreshFlows = async () => {
+  const handleRefreshFlows = useCallback(async () => {
     try {
       setFlows(await api.listStbFlows());
     } catch {
       // silent
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (activeSection === 'flows') refreshFlows();
-  }, [activeSection]);
+    if (activeSection === 'flows') {
+      handleRefreshFlows();
+    }
+  }, [activeSection, handleRefreshFlows]);
 
   const handleStartRecording = async () => {
-    if (!serial || !recordingName) return;
+    if (!selectedSerial || !recordingName) return;
     try {
-      await api.startStbRecording(recordingName, serial);
+      await api.startStbRecording(recordingName, selectedSerial);
       setRecording(true);
       setError(null);
     } catch (e) {
@@ -235,7 +316,7 @@ export default function StbAutomationPanel() {
       await api.stopStbRecording();
       setRecording(false);
       setRecordingName('');
-      await refreshFlows();
+      await handleRefreshFlows();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to stop recording');
     }
@@ -253,7 +334,7 @@ export default function StbAutomationPanel() {
   const handleDeleteFlow = async (flowId: string) => {
     try {
       await api.deleteStbFlow(flowId);
-      await refreshFlows();
+      await handleRefreshFlows();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete flow');
     }
@@ -261,11 +342,26 @@ export default function StbAutomationPanel() {
 
   // ── Chaos ──────────────────────────────────────────────────────────
 
+  const handleRefreshChaos = useCallback(async () => {
+    try {
+      const r = await api.getStbChaosStatus();
+      setChaosResult(r);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeSection === 'chaos') {
+      handleRefreshChaos();
+    }
+  }, [activeSection, handleRefreshChaos]);
+
   const handleStartChaos = async () => {
-    if (!serial) return;
+    if (!selectedSerial) return;
     try {
       const r = await api.startStbChaos({
-        serial,
+        serial: selectedSerial,
         duration_secs: chaosDuration,
         on_anomaly: 'collect',
       });
@@ -284,30 +380,17 @@ export default function StbAutomationPanel() {
     }
   };
 
-  const refreshChaos = async () => {
-    try {
-      const r = await api.getStbChaosStatus();
-      setChaosResult(r);
-    } catch {
-      // silent
-    }
-  };
-
-  useEffect(() => {
-    if (activeSection === 'chaos') refreshChaos();
-  }, [activeSection]);
-
   // ── NL ─────────────────────────────────────────────────────────────
 
   const handleNlGenerate = async () => {
-    if (!serial || !nlPrompt) return;
+    if (!selectedSerial || !nlPrompt) return;
     setNlGenerating(true);
     setError(null);
     try {
       const flow = await api.generateStbFlow({
         prompt: nlPrompt,
-        serial,
-        device_id: serial,
+        serial: selectedSerial,
+        device_id: selectedSerial,
       });
       setNlPrompt('');
       setFlows((prev) => [flow, ...prev]);
@@ -319,11 +402,16 @@ export default function StbAutomationPanel() {
     }
   };
 
+  // ── Derived ────────────────────────────────────────────────────────
+
+  const connectedDevices = (devices ?? []).filter((d) => d.state === 'connected');
+  const selectedDevice = connectedDevices.find((d) => d.serial === selectedSerial);
+
   // ── Render ─────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
-      {/* Header + Serial Input */}
+      {/* Header + Device Selector */}
       <div className={card}>
         <div className="mb-3 flex items-center gap-2">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">STB Automation</h2>
@@ -332,38 +420,73 @@ export default function StbAutomationPanel() {
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Connect new device */}
+        <div className="mb-3 flex items-center gap-2">
           <input
-            value={serial}
-            onChange={(e) => setSerial(e.target.value)}
-            placeholder="ADB device serial (e.g. 192.168.4.10:5555)"
-            className="w-72 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+            value={connectIp}
+            onChange={(e) => setConnectIp(e.target.value)}
+            placeholder="IP address (e.g. 192.168.4.10)"
+            onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+            className="w-56 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
           />
-          <button onClick={handleReadState} disabled={!serial || loading} className={btnPrimary}>
-            Read State
-          </button>
-          <button
-            onClick={status?.logcat_monitor_active ? handleStopMonitor : handleStartMonitor}
-            disabled={!serial || loading}
-            className={status?.logcat_monitor_active ? btnDanger : btnSuccess}
-          >
-            {status?.logcat_monitor_active ? 'Stop Monitor' : 'Start Monitor'}
-          </button>
-          <button onClick={refresh} disabled={!serial} className={btnGhost}>
-            Refresh
+          <button onClick={handleConnect} disabled={connecting || !connectIp} className={btnPrimary}>
+            {connecting ? 'Connecting...' : 'Connect'}
           </button>
         </div>
 
-        {/* Status badges */}
-        {status && (
-          <div className="mt-2 flex gap-3 text-xs text-gray-500 dark:text-gray-400">
-            <span>
-              Monitor:{' '}
-              <span className={`font-medium ${status.logcat_monitor_active ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
-                {status.logcat_monitor_active ? 'active' : 'inactive'}
+        {/* Device list */}
+        {(devices ?? []).length > 0 ? (
+          <div className="space-y-1">
+            {(devices ?? []).map((d) => (
+              <div
+                key={d.serial}
+                onClick={() => d.state === 'connected' && handleSelectDevice(d.serial)}
+                className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-xs ${
+                  selectedSerial === d.serial
+                    ? 'border-blue-500 bg-blue-50 dark:border-blue-600 dark:bg-blue-950'
+                    : 'border-gray-100 bg-gray-50 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750'
+                } ${d.state !== 'connected' ? 'cursor-not-allowed opacity-60' : ''}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-medium text-gray-900 dark:text-white">{d.serial}</span>
+                  <span className={`${badge} ${DEVICE_STATE_COLORS[d.state] || DEVICE_STATE_COLORS.disconnected}`}>
+                    {d.state}
+                  </span>
+                  {d.model && <span className="text-gray-500 dark:text-gray-400">{d.model}</span>}
+                </div>
+                {selectedSerial === d.serial && (
+                  <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">SELECTED</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            No ADB devices found. Connect a device via IP address above or ensure USB connection.
+          </p>
+        )}
+
+        {/* Selected device controls */}
+        {selectedDevice && (
+          <div className="mt-3 flex items-center gap-2">
+            <button onClick={handleReadState} disabled={loading} className={btnPrimary}>
+              Read State
+            </button>
+            <button
+              onClick={status?.logcat_monitor_active ? handleStopMonitor : handleStartMonitor}
+              disabled={loading}
+              className={status?.logcat_monitor_active ? btnDanger : btnSuccess}
+            >
+              {status?.logcat_monitor_active ? 'Stop Monitor' : 'Start Monitor'}
+            </button>
+            {status && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                Monitor:{' '}
+                <span className={`font-medium ${status.logcat_monitor_active ? 'text-green-600 dark:text-green-400' : ''}`}>
+                  {status.logcat_monitor_active ? 'active' : 'inactive'}
+                </span>
               </span>
-            </span>
-            {status.logcat_serial && <span className="font-mono">{status.logcat_serial}</span>}
+            )}
           </div>
         )}
 
@@ -374,407 +497,424 @@ export default function StbAutomationPanel() {
         )}
       </div>
 
-      {/* Section Tabs */}
-      <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
-        {([
-          { id: 'remote' as const, label: 'Remote' },
-          { id: 'crawl' as const, label: 'Crawl' },
-          { id: 'flows' as const, label: 'Test Flows' },
-          { id: 'chaos' as const, label: 'Chaos' },
-          { id: 'nl' as const, label: 'NL Test' },
-        ]).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSection(tab.id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              activeSection === tab.id
-                ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Remote Control Section */}
-      {activeSection === 'remote' && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {/* D-pad */}
-          <div className={card}>
-            <h3 className={`mb-3 ${sectionTitle}`}>Navigate + Observe</h3>
-            <p className="mb-3 text-[11px] text-gray-500 dark:text-gray-400">
-              Each key press uses logcat-driven settle detection to wait for the screen to stabilize.
-            </p>
-            <div className="mx-auto flex max-w-[220px] flex-col items-center gap-1 rounded-xl bg-gray-800 px-4 py-4 dark:bg-gray-950">
-              <button onClick={() => handleNavigate('up')} disabled={navigating} className={dpadBtn}>&#x25B2;</button>
-              <div className="flex items-center gap-1">
-                <button onClick={() => handleNavigate('left')} disabled={navigating} className={dpadBtn}>&#x25C0;</button>
-                <button onClick={() => handleNavigate('enter')} disabled={navigating} className={dpadOk}>OK</button>
-                <button onClick={() => handleNavigate('right')} disabled={navigating} className={dpadBtn}>&#x25B6;</button>
-              </div>
-              <button onClick={() => handleNavigate('down')} disabled={navigating} className={dpadBtn}>&#x25BC;</button>
-
-              <div className="mt-2 flex gap-1">
-                <button onClick={() => handleNavigate('back')} disabled={navigating} className={`${btnBase} h-8 w-14 bg-gray-700 text-[10px] text-white hover:bg-gray-600`}>Back</button>
-                <button onClick={() => handleNavigate('home')} disabled={navigating} className={`${btnBase} h-8 w-14 bg-gray-700 text-[10px] text-white hover:bg-gray-600`}>Home</button>
-                <button onClick={() => handleNavigate('menu')} disabled={navigating} className={`${btnBase} h-8 w-14 bg-gray-700 text-[10px] text-white hover:bg-gray-600`}>Menu</button>
-              </div>
-            </div>
-
-            {navigating && <p className="mt-2 text-center text-xs text-blue-500">Navigating...</p>}
-
-            {/* Last navigation result */}
-            {lastNav && (
-              <div className="mt-3 rounded border border-gray-200 bg-gray-50 p-2 text-xs dark:border-gray-700 dark:bg-gray-800/50">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-600 dark:text-gray-300">
-                    {lastNav.action}
-                  </span>
-                  <span className={`${badge} ${lastNav.transitioned ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                    {lastNav.transitioned ? 'transitioned' : 'no change'}
-                  </span>
-                  <span className="text-gray-500 dark:text-gray-400">
-                    {lastNav.settle_ms}ms ({lastNav.settle_method})
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Recording indicator */}
-            {recording && (
-              <div className="mt-3 flex items-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 dark:border-red-700 dark:bg-red-900/20">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
-                <span className="text-xs font-medium text-red-700 dark:text-red-300">Recording steps...</span>
-                <button onClick={handleStopRecording} className={`ml-auto ${btnDanger} py-1 text-[10px]`}>
-                  Stop Recording
-                </button>
-              </div>
-            )}
+      {/* Only show rest when a device is selected */}
+      {selectedDevice && (
+        <>
+          {/* Section Tabs */}
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+            {([
+              { id: 'remote' as const, label: 'Remote' },
+              { id: 'crawl' as const, label: 'Crawl' },
+              { id: 'flows' as const, label: 'Test Flows' },
+              { id: 'chaos' as const, label: 'Chaos' },
+              { id: 'nl' as const, label: 'NL Test' },
+            ]).map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveSection(tab.id)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  activeSection === tab.id
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          {/* Screen State */}
-          <div className={card}>
-            <h3 className={`mb-3 ${sectionTitle}`}>Screen State</h3>
-            {screenState ? (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">Fingerprint:</span>
-                  <span className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] dark:bg-gray-800">{screenState.fingerprint}</span>
+          {/* Remote Control Section */}
+          {activeSection === 'remote' && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              {/* D-pad + Controls */}
+              <div className={card}>
+                <h3 className={`mb-3 ${sectionTitle}`}>Navigate + Observe</h3>
+                <p className="mb-3 text-[11px] text-gray-500 dark:text-gray-400">
+                  Each key press uses logcat-driven settle detection to wait for the screen to stabilize.
+                </p>
+                <div className="mx-auto flex max-w-[220px] flex-col items-center gap-1 rounded-xl bg-gray-800 px-4 py-4 dark:bg-gray-950">
+                  <button onClick={() => handleNavigate('up')} disabled={navigating} className={dpadBtn}>&#x25B2;</button>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => handleNavigate('left')} disabled={navigating} className={dpadBtn}>&#x25C0;</button>
+                    <button onClick={() => handleNavigate('enter')} disabled={navigating} className={dpadOk}>OK</button>
+                    <button onClick={() => handleNavigate('right')} disabled={navigating} className={dpadBtn}>&#x25B6;</button>
+                  </div>
+                  <button onClick={() => handleNavigate('down')} disabled={navigating} className={dpadBtn}>&#x25BC;</button>
+
+                  <div className="mt-2 flex gap-1">
+                    <button onClick={() => handleNavigate('back')} disabled={navigating} className={dpadSmall}>Back</button>
+                    <button onClick={() => handleNavigate('home')} disabled={navigating} className={dpadSmall}>Home</button>
+                    <button onClick={() => handleNavigate('menu')} disabled={navigating} className={dpadSmall}>Menu</button>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Package: </span>
-                  <span className="text-gray-900 dark:text-white">{screenState.state.package || '—'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Activity: </span>
-                  <span className="text-gray-900 dark:text-white">{screenState.state.activity || '—'}</span>
-                </div>
-                {screenState.state.focused_element && (
-                  <div className="rounded border border-purple-200 bg-purple-50 p-2 dark:border-purple-800 dark:bg-purple-900/20">
-                    <span className="text-purple-600 dark:text-purple-400">Focused: </span>
-                    <span className="font-medium text-purple-900 dark:text-purple-100">
-                      {screenState.state.focused_element.text || screenState.state.focused_element.resource_id || screenState.state.focused_element.class_name}
-                    </span>
+
+                {navigating && <p className="mt-2 text-center text-xs text-blue-500">Navigating...</p>}
+
+                {/* Last navigation result */}
+                {lastNav && (
+                  <div className="mt-3 rounded border border-gray-200 bg-gray-50 p-2 text-xs dark:border-gray-700 dark:bg-gray-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-600 dark:text-gray-300">{lastNav.action}</span>
+                      <span className={`${badge} ${lastNav.transitioned ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
+                        {lastNav.transitioned ? 'transitioned' : 'no change'}
+                      </span>
+                      <span className="text-gray-500 dark:text-gray-400">
+                        {lastNav.settle_ms}ms ({lastNav.settle_method})
+                      </span>
+                    </div>
                   </div>
                 )}
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">UI Elements: </span>
-                  <span className="text-gray-900 dark:text-white">{screenState.state.ui_elements?.length ?? 0}</span>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Click &quot;Read State&quot; or navigate to see the current screen.
-              </p>
-            )}
 
-            {/* Recent Events */}
-            {events.length > 0 && (
-              <div className="mt-4">
-                <h4 className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Recent Events</h4>
-                <div className="max-h-40 space-y-1 overflow-y-auto">
-                  {events.map((ev, i) => (
-                    <div key={i} className="flex gap-2 text-[11px]">
-                      <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
-                        {ev.event_type}
-                      </span>
-                      <span className="truncate text-gray-600 dark:text-gray-400">
-                        {ev.activity || ev.detail || ev.raw}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Anomalies */}
-            {anomalies.length > 0 && (
-              <div className="mt-4">
-                <h4 className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">Anomalies</h4>
-                <div className="max-h-32 space-y-1 overflow-y-auto">
-                  {anomalies.map((a, i) => (
-                    <div key={i} className="flex items-center gap-2 text-[11px]">
-                      <span className={`${badge} ${SEVERITY_COLORS[a.severity] || SEVERITY_COLORS.low}`}>
-                        {a.severity}
-                      </span>
-                      <span className="text-gray-700 dark:text-gray-300">{a.pattern_name}</span>
-                      <span className="text-gray-500">{a.category}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Crawl Section */}
-      {activeSection === 'crawl' && (
-        <div className={card}>
-          <h3 className={`mb-3 ${sectionTitle}`}>BFS Crawl Explorer</h3>
-          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            Autonomously explores the STB UI via key presses, building a persistent navigation model.
-          </p>
-
-          <div className="mb-4 flex gap-2">
-            <button
-              onClick={handleStartCrawl}
-              disabled={!serial || crawlStatus?.state === 'running'}
-              className={btnSuccess}
-            >
-              Start Crawl
-            </button>
-            <button
-              onClick={handleStopCrawl}
-              disabled={crawlStatus?.state !== 'running'}
-              className={btnDanger}
-            >
-              Stop Crawl
-            </button>
-          </div>
-
-          {crawlStatus && (
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 dark:text-gray-400">State:</span>
-                <span className={`${badge} ${STATE_COLORS[crawlStatus.state] || STATE_COLORS.idle}`}>{crawlStatus.state}</span>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Nodes: </span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.nodes_discovered}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Transitions: </span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.transitions_executed}</span>
-                </div>
-                {crawlStatus.current_node_id && (
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">Current: </span>
-                    <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300">{crawlStatus.current_node_id}</span>
+                {/* Recording indicator */}
+                {recording && (
+                  <div className="mt-3 flex items-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 dark:border-red-700 dark:bg-red-900/20">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    <span className="text-xs font-medium text-red-700 dark:text-red-300">Recording steps...</span>
+                    <button onClick={handleStopRecording} className={`ml-auto ${btnDanger} py-1 text-[10px]`}>
+                      Stop Recording
+                    </button>
                   </div>
                 )}
               </div>
-              {crawlStatus.error && (
-                <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300">
-                  {crawlStatus.error}
+
+              {/* HDMI Live View */}
+              <div className={card}>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className={sectionTitle}>HDMI Live View</h3>
+                  <div className="flex gap-1">
+                    {!videoStreaming ? (
+                      <button onClick={handleStartStream} disabled={loading} className={`${btnSuccess} py-1 text-[10px]`}>
+                        Start Stream
+                      </button>
+                    ) : (
+                      <button onClick={handleStopStream} disabled={loading} className={`${btnDanger} py-1 text-[10px]`}>
+                        Stop Stream
+                      </button>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* Test Flows Section */}
-      {activeSection === 'flows' && (
-        <div className="space-y-4">
-          {/* Record controls */}
-          <div className={card}>
-            <h3 className={`mb-3 ${sectionTitle}`}>Test Flow Recording</h3>
-            {recording ? (
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
-                <span className="text-xs font-medium text-red-700 dark:text-red-300">Recording... Navigate using the Remote tab to capture steps.</span>
-                <button onClick={handleStopRecording} className={`ml-auto ${btnDanger}`}>Stop Recording</button>
+                {videoStreaming ? (
+                  <div className="overflow-hidden rounded border border-gray-200 bg-black dark:border-gray-700">
+                    <img
+                      src="/api/v1/experimental/video/stream"
+                      alt="Live HDMI video stream"
+                      className="w-full"
+                      style={{ maxHeight: '360px', objectFit: 'contain' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-48 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-800">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      HDMI stream inactive. Click &quot;Start Stream&quot; to begin live capture.
+                    </p>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  value={recordingName}
-                  onChange={(e) => setRecordingName(e.target.value)}
-                  placeholder="Flow name"
-                  className="w-48 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                />
-                <button onClick={handleStartRecording} disabled={!serial || !recordingName} className={btnSuccess}>
-                  Start Recording
-                </button>
-              </div>
-            )}
-          </div>
 
-          {/* Flow list */}
-          <div className={card}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className={sectionTitle}>Saved Flows</h3>
-              <button onClick={refreshFlows} className={btnGhost}>Refresh</button>
-            </div>
-
-            {flows.length === 0 ? (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                No test flows yet. Record navigation or generate with NL.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {flows.map((flow) => (
-                  <div key={flow.id} className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 dark:border-gray-700">
+              {/* Screen State + Events */}
+              <div className={card}>
+                <h3 className={`mb-3 ${sectionTitle}`}>Screen State</h3>
+                {screenState ? (
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 dark:text-gray-400">Fingerprint:</span>
+                      <span className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] dark:bg-gray-800">{screenState.fingerprint}</span>
+                    </div>
                     <div>
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">{flow.name}</div>
-                      <div className="flex gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                        <span>{flow.steps.length} steps</span>
-                        <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>{flow.source}</span>
-                        {flow.description && <span className="max-w-xs truncate">{flow.description}</span>}
-                      </div>
+                      <span className="text-gray-500 dark:text-gray-400">Package: </span>
+                      <span className="text-gray-900 dark:text-white">{screenState.state.package || '\u2014'}</span>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => handleRunFlow(flow.id)} className={`${btnPrimary} py-1 text-[10px]`}>Run</button>
-                      <button onClick={() => handleDeleteFlow(flow.id)} className={`${btnDanger} py-1 text-[10px]`}>Delete</button>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Activity: </span>
+                      <span className="text-gray-900 dark:text-white">{screenState.state.activity || '\u2014'}</span>
+                    </div>
+                    {screenState.state.focused_element && (
+                      <div className="rounded border border-purple-200 bg-purple-50 p-2 dark:border-purple-800 dark:bg-purple-900/20">
+                        <span className="text-purple-600 dark:text-purple-400">Focused: </span>
+                        <span className="font-medium text-purple-900 dark:text-purple-100">
+                          {screenState.state.focused_element.text || screenState.state.focused_element.resource_id || screenState.state.focused_element.class_name}
+                        </span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">UI Elements: </span>
+                      <span className="text-gray-900 dark:text-white">{screenState.state.ui_elements?.length ?? 0}</span>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                ) : (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Click &quot;Read State&quot; or navigate to see the current screen.
+                  </p>
+                )}
 
-          {/* Active flow run */}
-          {flowRun && (
-            <div className={card}>
-              <h3 className={`mb-3 ${sectionTitle}`}>Flow Run</h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">State:</span>
-                  <span className={`${badge} ${STATE_COLORS[flowRun.state] || STATE_COLORS.idle}`}>{flowRun.state}</span>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div><span className="text-gray-500 dark:text-gray-400">Step: </span><span className="font-semibold">{flowRun.current_step}</span></div>
-                  <div><span className="text-green-600">Passed: </span><span className="font-semibold">{flowRun.steps_passed}</span></div>
-                  <div><span className="text-red-600">Failed: </span><span className="font-semibold">{flowRun.steps_failed}</span></div>
-                  <div><span className="text-orange-600">Anomalies: </span><span className="font-semibold">{flowRun.anomalies_detected}</span></div>
-                </div>
+                {/* Recent Events */}
+                {events.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Recent Events</h4>
+                    <div className="max-h-32 space-y-1 overflow-y-auto">
+                      {events.map((ev, i) => (
+                        <div key={i} className="flex gap-2 text-[11px]">
+                          <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                            {ev.event_type}
+                          </span>
+                          <span className="truncate text-gray-600 dark:text-gray-400">
+                            {ev.activity || ev.detail || ev.raw}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Anomalies */}
+                {anomalies.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">Anomalies</h4>
+                    <div className="max-h-24 space-y-1 overflow-y-auto">
+                      {anomalies.map((a, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px]">
+                          <span className={`${badge} ${SEVERITY_COLORS[a.severity] || SEVERITY_COLORS.low}`}>
+                            {a.severity}
+                          </span>
+                          <span className="text-gray-700 dark:text-gray-300">{a.pattern_name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Chaos Section */}
-      {activeSection === 'chaos' && (
-        <div className={card}>
-          <h3 className={`mb-3 ${sectionTitle}`}>Chaos Mode</h3>
-          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            Autonomous random exploration — sends weighted-random key presses while monitoring for anomalies.
-          </p>
+          {/* Crawl Section */}
+          {activeSection === 'crawl' && (
+            <div className={card}>
+              <h3 className={`mb-3 ${sectionTitle}`}>BFS Crawl Explorer</h3>
+              <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                Autonomously explores the STB UI via key presses, building a persistent navigation model.
+              </p>
 
-          <div className="mb-4 flex items-center gap-3">
-            <label className="text-xs text-gray-500 dark:text-gray-400">Duration (s):</label>
-            <input
-              type="number"
-              value={chaosDuration}
-              onChange={(e) => setChaosDuration(Number(e.target.value))}
-              min={10}
-              max={3600}
-              className="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-            />
-            <button
-              onClick={handleStartChaos}
-              disabled={!serial || chaosResult?.state === 'running'}
-              className={btnSuccess}
-            >
-              Start Chaos
-            </button>
-            <button
-              onClick={handleStopChaos}
-              disabled={chaosResult?.state !== 'running'}
-              className={btnDanger}
-            >
-              Stop Chaos
-            </button>
-            <button onClick={refreshChaos} className={btnGhost}>Refresh</button>
-          </div>
-
-          {chaosResult && chaosResult.state !== 'idle' && (
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 dark:text-gray-400">State:</span>
-                <span className={`${badge} ${STATE_COLORS[chaosResult.state] || STATE_COLORS.idle}`}>{chaosResult.state}</span>
-              </div>
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Keys Sent: </span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.keys_sent}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Screens: </span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.screens_visited}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Duration: </span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.duration_secs}s</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">Anomalies: </span>
-                  <span className={`font-semibold ${chaosResult.anomalies.length > 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
-                    {chaosResult.anomalies.length}
-                  </span>
-                </div>
+              <div className="mb-4 flex gap-2">
+                <button onClick={handleStartCrawl} disabled={crawlStatus?.state === 'running'} className={btnSuccess}>
+                  Start Crawl
+                </button>
+                <button onClick={handleStopCrawl} disabled={crawlStatus?.state !== 'running'} className={btnDanger}>
+                  Stop Crawl
+                </button>
               </div>
 
-              {chaosResult.anomalies.length > 0 && (
-                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded border border-red-200 bg-red-50 p-2 dark:border-red-800 dark:bg-red-900/20">
-                  {chaosResult.anomalies.map((a, i) => (
-                    <div key={i} className="flex items-center gap-2 text-[11px]">
-                      <span className={`${badge} ${SEVERITY_COLORS[a.severity] || SEVERITY_COLORS.low}`}>{a.severity}</span>
-                      <span className="text-gray-700 dark:text-gray-300">{a.pattern_name}</span>
-                      <span className="text-gray-500">{a.timestamp}</span>
+              {crawlStatus && (
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 dark:text-gray-400">State:</span>
+                    <span className={`${badge} ${STATE_COLORS[crawlStatus.state] || STATE_COLORS.idle}`}>{crawlStatus.state}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Nodes: </span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.nodes_discovered}</span>
                     </div>
-                  ))}
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Transitions: </span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.transitions_executed}</span>
+                    </div>
+                    {crawlStatus.current_node_id && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400">Current: </span>
+                        <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300">{crawlStatus.current_node_id}</span>
+                      </div>
+                    )}
+                  </div>
+                  {crawlStatus.error && (
+                    <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300">
+                      {crawlStatus.error}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-        </div>
-      )}
 
-      {/* NL Test Section */}
-      {activeSection === 'nl' && (
-        <div className={card}>
-          <h3 className={`mb-3 ${sectionTitle}`}>Natural Language Test Generation</h3>
-          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            Describe a test scenario in plain English and the AI will generate an executable test flow.
-          </p>
+          {/* Test Flows Section */}
+          {activeSection === 'flows' && (
+            <div className="space-y-4">
+              {/* Record controls */}
+              <div className={card}>
+                <h3 className={`mb-3 ${sectionTitle}`}>Test Flow Recording</h3>
+                {recording ? (
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    <span className="text-xs font-medium text-red-700 dark:text-red-300">Recording... Navigate using the Remote tab to capture steps.</span>
+                    <button onClick={handleStopRecording} className={`ml-auto ${btnDanger}`}>Stop Recording</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={recordingName}
+                      onChange={(e) => setRecordingName(e.target.value)}
+                      placeholder="Flow name"
+                      className="w-48 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                    />
+                    <button onClick={handleStartRecording} disabled={!recordingName} className={btnSuccess}>
+                      Start Recording
+                    </button>
+                  </div>
+                )}
+              </div>
 
-          <textarea
-            value={nlPrompt}
-            onChange={(e) => setNlPrompt(e.target.value)}
-            placeholder="e.g. Navigate to Netflix, start a movie, apply 50% packet loss, verify playback degrades gracefully"
-            rows={3}
-            className="mb-3 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-          />
+              {/* Flow list */}
+              <div className={card}>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className={sectionTitle}>Saved Flows</h3>
+                  <button onClick={handleRefreshFlows} className={btnGhost}>Refresh</button>
+                </div>
 
-          <button
-            onClick={handleNlGenerate}
-            disabled={!serial || !nlPrompt || nlGenerating}
-            className={btnPrimary}
-          >
-            {nlGenerating ? 'Generating...' : 'Generate Test Flow'}
-          </button>
+                {flows.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    No test flows yet. Record navigation or generate with NL.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {flows.map((flow) => (
+                      <div key={flow.id} className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 dark:border-gray-700">
+                        <div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-white">{flow.name}</div>
+                          <div className="flex gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                            <span>{flow.steps.length} steps</span>
+                            <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>{flow.source}</span>
+                            {flow.description && <span className="max-w-xs truncate">{flow.description}</span>}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={() => handleRunFlow(flow.id)} className={`${btnPrimary} py-1 text-[10px]`}>Run</button>
+                          <button onClick={() => handleDeleteFlow(flow.id)} className={`${btnDanger} py-1 text-[10px]`}>Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-          {nlGenerating && (
-            <p className="mt-2 text-xs text-blue-500 dark:text-blue-400">
-              AI is analyzing your description and generating test steps...
-            </p>
+              {/* Active flow run */}
+              {flowRun && (
+                <div className={card}>
+                  <h3 className={`mb-3 ${sectionTitle}`}>Flow Run</h3>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 dark:text-gray-400">State:</span>
+                      <span className={`${badge} ${STATE_COLORS[flowRun.state] || STATE_COLORS.idle}`}>{flowRun.state}</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-4">
+                      <div><span className="text-gray-500 dark:text-gray-400">Step: </span><span className="font-semibold">{flowRun.current_step}</span></div>
+                      <div><span className="text-green-600">Passed: </span><span className="font-semibold">{flowRun.steps_passed}</span></div>
+                      <div><span className="text-red-600">Failed: </span><span className="font-semibold">{flowRun.steps_failed}</span></div>
+                      <div><span className="text-orange-600">Anomalies: </span><span className="font-semibold">{flowRun.anomalies_detected}</span></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
-        </div>
+
+          {/* Chaos Section */}
+          {activeSection === 'chaos' && (
+            <div className={card}>
+              <h3 className={`mb-3 ${sectionTitle}`}>Chaos Mode</h3>
+              <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                Autonomous random exploration — sends weighted-random key presses while monitoring for anomalies.
+              </p>
+
+              <div className="mb-4 flex items-center gap-3">
+                <label className="text-xs text-gray-500 dark:text-gray-400">Duration (s):</label>
+                <input
+                  type="number"
+                  value={chaosDuration}
+                  onChange={(e) => setChaosDuration(Number(e.target.value))}
+                  min={10}
+                  max={3600}
+                  className="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                />
+                <button onClick={handleStartChaos} disabled={chaosResult?.state === 'running'} className={btnSuccess}>
+                  Start Chaos
+                </button>
+                <button onClick={handleStopChaos} disabled={chaosResult?.state !== 'running'} className={btnDanger}>
+                  Stop Chaos
+                </button>
+                <button onClick={handleRefreshChaos} className={btnGhost}>Refresh</button>
+              </div>
+
+              {chaosResult && chaosResult.state !== 'idle' && (
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 dark:text-gray-400">State:</span>
+                    <span className={`${badge} ${STATE_COLORS[chaosResult.state] || STATE_COLORS.idle}`}>{chaosResult.state}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Keys Sent: </span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.keys_sent}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Screens: </span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.screens_visited}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Duration: </span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{chaosResult.duration_secs}s</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Anomalies: </span>
+                      <span className={`font-semibold ${chaosResult.anomalies.length > 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
+                        {chaosResult.anomalies.length}
+                      </span>
+                    </div>
+                  </div>
+
+                  {chaosResult.anomalies.length > 0 && (
+                    <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded border border-red-200 bg-red-50 p-2 dark:border-red-800 dark:bg-red-900/20">
+                      {chaosResult.anomalies.map((a, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px]">
+                          <span className={`${badge} ${SEVERITY_COLORS[a.severity] || SEVERITY_COLORS.low}`}>{a.severity}</span>
+                          <span className="text-gray-700 dark:text-gray-300">{a.pattern_name}</span>
+                          <span className="text-gray-500">{a.timestamp}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* NL Test Section */}
+          {activeSection === 'nl' && (
+            <div className={card}>
+              <h3 className={`mb-3 ${sectionTitle}`}>Natural Language Test Generation</h3>
+              <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                Describe a test scenario in plain English and the AI will generate an executable test flow.
+              </p>
+
+              <textarea
+                value={nlPrompt}
+                onChange={(e) => setNlPrompt(e.target.value)}
+                placeholder="e.g. Navigate to Netflix, start a movie, apply 50% packet loss, verify playback degrades gracefully"
+                rows={3}
+                className="mb-3 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
+
+              <button onClick={handleNlGenerate} disabled={!nlPrompt || nlGenerating} className={btnPrimary}>
+                {nlGenerating ? 'Generating...' : 'Generate Test Flow'}
+              </button>
+
+              {nlGenerating && (
+                <p className="mt-2 text-xs text-blue-500 dark:text-blue-400">
+                  AI is analyzing your description and generating test steps...
+                </p>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
