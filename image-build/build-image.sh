@@ -316,6 +316,7 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="
     python3-venv hostapd dnsmasq bridge-utils iptables git \
     tshark libcap2-bin wireless-tools iw ffmpeg v4l-utils \
     hping3 iperf3 wireguard-tools openvpn curl jq \
+    android-tools-adb \
     unattended-upgrades apt-listchanges rpi-eeprom
 
 # Upgrade all packages to latest (security patches since image was built)
