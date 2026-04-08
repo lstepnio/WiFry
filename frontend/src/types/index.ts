@@ -601,3 +601,53 @@ export interface GremlinStatus {
     stall_interval: string;
   };
 }
+
+// STB_AUTOMATION types
+
+export interface StbUIElement {
+  resource_id: string;
+  text: string;
+  class_name: string;
+  bounds: string;
+  focused: boolean;
+  clickable: boolean;
+  selected: boolean;
+}
+
+export interface StbLogcatEvent {
+  event_type: string;
+  package: string;
+  activity: string;
+  detail: string;
+  timestamp: string;
+  raw: string;
+}
+
+export interface StbScreenState {
+  package: string;
+  activity: string;
+  ui_elements: StbUIElement[];
+  focused_element: StbUIElement | null;
+  recent_events: StbLogcatEvent[];
+  timestamp: string;
+}
+
+export interface StbScreenStateResponse {
+  state: StbScreenState;
+  fingerprint: string;
+}
+
+export interface StbCrawlStatus {
+  state: string;
+  current_node_id: string | null;
+  nodes_discovered: number;
+  transitions_executed: number;
+  error: string | null;
+}
+
+export interface StbStatus {
+  logcat_monitor_active: boolean;
+  logcat_session_id: string | null;
+  logcat_serial: string | null;
+  crawl: StbCrawlStatus;
+}

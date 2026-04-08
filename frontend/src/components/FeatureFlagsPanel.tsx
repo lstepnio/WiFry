@@ -17,7 +17,7 @@ interface FeatureFlag {
 type Flags = Record<string, FeatureFlag>;
 
 const CATEGORY_ORDER = ['core', 'analysis', 'tools', 'advanced', 'sharing', 'experimental', 'fun'];
-const EXPERIMENTAL_FLAGS = new Set(['sharing_tunnel', 'collaboration', 'experimental_video_capture']);
+const EXPERIMENTAL_FLAGS = new Set(['sharing_tunnel', 'collaboration', 'experimental_video_capture', 'stb_automation']);
 const CATEGORY_LABELS: Record<string, string> = {
   core: 'Core Features',
   analysis: 'Analysis',

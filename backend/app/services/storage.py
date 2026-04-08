@@ -33,6 +33,8 @@ _PUBLIC_DATA_SUBDIRS: Dict[str, str] = {
     "annotations": "annotations",
     "sessions": "sessions",
     "scenarios": "scenarios",
+    "stb_nav_models": "stb-nav-models",
+    "stb_test_flows": "stb-test-flows",
 }
 
 _PRIVATE_DATA_SUBDIRS: Dict[str, str] = {
@@ -54,6 +56,8 @@ _MOCK_PATHS: Dict[str, Path] = {
     "annotations": Path("/tmp/wifry-annotations"),
     "sessions": Path("/tmp/wifry-sessions"),
     "scenarios": Path("/tmp/wifry-scenarios"),
+    "stb_nav_models": Path("/tmp/wifry-stb-nav-models"),
+    "stb_test_flows": Path("/tmp/wifry-stb-test-flows"),
     "runtime_state": Path("/tmp/wifry-runtime-state"),
 }
 
@@ -69,6 +73,8 @@ def _default_paths() -> Dict[str, Path]:
         "annotations": settings.data_dir / "annotations",
         "sessions": settings.data_dir / "sessions",
         "scenarios": settings.data_dir / "scenarios",
+        "stb_nav_models": settings.data_dir / "stb-nav-models",
+        "stb_test_flows": settings.data_dir / "stb-test-flows",
         "runtime_state": settings.data_dir / "runtime-state",
     }
 

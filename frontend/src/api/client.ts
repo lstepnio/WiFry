@@ -378,3 +378,28 @@ export async function analyzeVideoFrame(params?: { provider?: string; model?: st
     body: JSON.stringify(params ?? {}),
   });
 }
+
+// STB_AUTOMATION — STB test automation endpoints
+export async function getStbStatus(): Promise<import('../types').StbStatus> {
+  return request('/experimental/stb/status');
+}
+
+export async function getStbState(serial: string, includeHierarchy: boolean = true): Promise<import('../types').StbScreenStateResponse> {
+  const params = new URLSearchParams({ serial, include_hierarchy: String(includeHierarchy) });
+  return request(`/experimental/stb/state?${params}`);
+}
+
+export async function getStbEvents(lastN: number = 20): Promise<import('../types').StbLogcatEvent[]> {
+  return request(`/experimental/stb/events?last_n=${lastN}`);
+}
+
+export async function startStbMonitor(serial: string, tags?: string[]): Promise<{ status: string; session_id?: string; serial?: string }> {
+  return request('/experimental/stb/monitor/start', {
+    method: 'POST',
+    body: JSON.stringify({ serial, tags }),
+  });
+}
+
+export async function stopStbMonitor(): Promise<{ status: string }> {
+  return request('/experimental/stb/monitor/stop', { method: 'POST' });
+}

@@ -77,6 +77,15 @@ async def lifespan(app: FastAPI):
                 logger.info("[EXPERIMENTAL_VIDEO_CAPTURE] Streamer stopped during shutdown")
         except ImportError:
             pass
+        # STB_AUTOMATION — Stop logcat monitor if running
+        try:
+            from .experimental.stb_automation.logcat_monitor import get_monitor as _get_stb_monitor
+            _stb_monitor = _get_stb_monitor()
+            if _stb_monitor.is_active:
+                await _stb_monitor.stop()
+                logger.info("[STB_AUTOMATION] Logcat monitor stopped during shutdown")
+        except ImportError:
+            pass
 
         logger.info("Cleanup complete")
     except Exception as e:
@@ -183,6 +192,15 @@ try:
     logger.debug("[EXPERIMENTAL_VIDEO_CAPTURE] Router registered")
 except Exception as _exp_err:
     logger.debug("[EXPERIMENTAL_VIDEO_CAPTURE] Module not loaded: %s", _exp_err)
+
+# STB_AUTOMATION — Guarded registration; no-op if import fails or flag disabled.
+# Remove this block and the experimental/stb_automation/ package to fully excise.
+try:
+    from .experimental.stb_automation.router import router as _stb_auto_router
+    app.include_router(_stb_auto_router)
+    logger.debug("[STB_AUTOMATION] Router registered")
+except Exception as _stb_err:
+    logger.debug("[STB_AUTOMATION] Module not loaded: %s", _stb_err)
 
 
 @app.get("/api/v1/health")
