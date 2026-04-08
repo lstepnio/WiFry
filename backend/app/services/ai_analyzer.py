@@ -255,15 +255,17 @@ async def analyze_capture(
             )
 
     if not summary:
-        return AnalysisResultV2(
+        result = AnalysisResultV2(
             capture_id=capture_id,
             summary="No capture data available for analysis.",
             analyzed_at=datetime.now(timezone.utc).isoformat(),
         )
+        _save_analysis_v2(capture_id, result)
+        return result
 
     # Input guardrails
     if summary.meta.total_packets < MIN_PACKETS_FOR_ANALYSIS:
-        return AnalysisResultV2(
+        result = AnalysisResultV2(
             capture_id=capture_id,
             summary=f"Capture contains only {summary.meta.total_packets} packets — insufficient for meaningful analysis. Try a longer capture.",
             health_badge=HealthBadge.INSUFFICIENT,
@@ -276,6 +278,8 @@ async def analyze_capture(
             ],
             analyzed_at=datetime.now(timezone.utc).isoformat(),
         )
+        _save_analysis_v2(capture_id, result)
+        return result
 
     # Determine pack
     pack = request.pack or (summary.meta.pack if summary.meta else "custom")
@@ -285,7 +289,7 @@ async def analyze_capture(
     if settings.mock_mode:
         result = _mock_analysis_v2(capture_id, pack, provider)
     elif not settings.anthropic_api_key and not settings.openai_api_key:
-        return AnalysisResultV2(
+        result = AnalysisResultV2(
             capture_id=capture_id,
             pack=pack,
             provider="none",
