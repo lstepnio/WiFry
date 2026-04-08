@@ -662,3 +662,34 @@ export interface StbNavigateResponse {
   settle_method: string;
   settle_ms: number;
 }
+
+export interface StbAnomalyPattern {
+  name: string;
+  pattern: string;
+  tags: string[];
+  severity: string;
+  category: string;
+}
+
+export interface StbDetectedAnomaly {
+  pattern_name: string;
+  severity: string;
+  category: string;
+  timestamp: string;
+  logcat_line: StbLogcatEvent | null;
+  vision_state: string | null;
+  context_lines: string[];
+  diagnostics_collected: boolean;
+  artifact_ids: string[];
+}
+
+export interface StbDiagnosticsResult {
+  collected_at: string;
+  reason: string;
+  severity: string;
+  artifacts: string[];
+  screenshot?: string;
+  bugreport?: string;
+  screenshot_error?: string;
+  bugreport_error?: string;
+}

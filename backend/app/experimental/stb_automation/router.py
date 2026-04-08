@@ -8,6 +8,12 @@ Phase 1A endpoints:
 Phase 1B endpoints:
   POST /api/v1/experimental/stb/navigate — Send key + observe result
 
+Phase 1D endpoints:
+  GET  /api/v1/experimental/stb/anomalies           — List detected anomalies
+  GET  /api/v1/experimental/stb/anomalies/patterns   — List anomaly patterns
+  PUT  /api/v1/experimental/stb/anomalies/patterns   — Update anomaly patterns
+  POST /api/v1/experimental/stb/diagnostics/collect   — Manual diagnostic trigger
+
 All endpoints return 404 if the feature flag is disabled.
 """
 
@@ -19,9 +25,10 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, fingerprint as fp, screen_reader
+from . import action_executor, diagnostics, fingerprint as fp, screen_reader
+from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import CrawlStatus, LogcatEvent, ScreenState
+from .models import AnomalyPattern, CrawlStatus, DetectedAnomaly, LogcatEvent, ScreenState
 
 logger = logging.getLogger("wifry.stb_automation.router")
 
@@ -202,4 +209,58 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
         transitioned=result.transitioned,
         settle_method=result.settle_method,
         settle_ms=round(result.settle_ms, 1),
+    )
+
+
+# ── Anomaly Detection (Phase 1D) ───────────────────────────────────
+
+
+@router.get("/anomalies")
+async def get_anomalies(
+    last_n: int = Query(50, ge=1, le=200, description="Number of recent anomalies"),
+) -> List[DetectedAnomaly]:
+    """STB_AUTOMATION — List detected anomalies."""
+    _check_flag()
+    detector = get_detector()
+    return detector.get_anomalies(last_n=last_n)
+
+
+@router.get("/anomalies/patterns")
+async def get_anomaly_patterns() -> List[AnomalyPattern]:
+    """STB_AUTOMATION — List configured anomaly detection patterns."""
+    _check_flag()
+    detector = get_detector()
+    return detector.patterns
+
+
+@router.put("/anomalies/patterns")
+async def set_anomaly_patterns(patterns: List[AnomalyPattern]) -> List[AnomalyPattern]:
+    """STB_AUTOMATION — Update anomaly detection patterns."""
+    _check_flag()
+    detector = get_detector()
+    detector.set_patterns(patterns)
+    return detector.patterns
+
+
+# ── Diagnostics (Phase 1D) ─────────────────────────────────────────
+
+
+class DiagnosticsRequest(BaseModel):
+    serial: str
+    reason: str = "manual"
+    severity: str = "medium"
+
+
+@router.post("/diagnostics/collect")
+async def collect_diagnostics(req: DiagnosticsRequest) -> dict:
+    """STB_AUTOMATION — Manually trigger diagnostic collection.
+
+    Collects screenshot, dumpsys outputs, and optionally bugreport
+    from the STB.  All artifacts are linked to the active test session.
+    """
+    _check_flag()
+    return await diagnostics.collect_diagnostics(
+        serial=req.serial,
+        reason=req.reason,
+        severity=req.severity,
     )

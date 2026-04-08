@@ -410,3 +410,26 @@ export async function stbNavigate(serial: string, action: string, settleTimeoutM
     body: JSON.stringify({ serial, action, settle_timeout_ms: settleTimeoutMs }),
   });
 }
+
+// STB_AUTOMATION — Anomaly detection endpoints
+export async function getStbAnomalies(lastN: number = 50): Promise<import('../types').StbDetectedAnomaly[]> {
+  return request(`/experimental/stb/anomalies?last_n=${lastN}`);
+}
+
+export async function getStbAnomalyPatterns(): Promise<import('../types').StbAnomalyPattern[]> {
+  return request('/experimental/stb/anomalies/patterns');
+}
+
+export async function setStbAnomalyPatterns(patterns: import('../types').StbAnomalyPattern[]): Promise<import('../types').StbAnomalyPattern[]> {
+  return request('/experimental/stb/anomalies/patterns', {
+    method: 'PUT',
+    body: JSON.stringify(patterns),
+  });
+}
+
+export async function collectStbDiagnostics(serial: string, reason: string = 'manual', severity: string = 'medium'): Promise<import('../types').StbDiagnosticsResult> {
+  return request('/experimental/stb/diagnostics/collect', {
+    method: 'POST',
+    body: JSON.stringify({ serial, reason, severity }),
+  });
+}
