@@ -663,6 +663,45 @@ export interface StbNavigateResponse {
   settle_ms: number;
 }
 
+export interface StbTransitionEdge {
+  from_node: string;
+  to_node: string;
+  action: string;
+  success_count: number;
+  no_effect_count: number;
+  avg_transition_ms: number;
+  settle_method: string;
+}
+
+export interface StbScreenNode {
+  id: string;
+  fingerprint: string;
+  screen_type: string;
+  title: string;
+  package: string;
+  activity: string;
+  elements: StbUIElement[];
+  vision_analysis: Record<string, unknown> | null;
+  visit_count: number;
+  last_visited: string;
+}
+
+export interface StbNavigationModel {
+  device_id: string;
+  device_model: string;
+  created_at: string;
+  updated_at: string;
+  home_node_id: string;
+  nodes: Record<string, StbScreenNode>;
+  edges: StbTransitionEdge[];
+}
+
+export interface StbPathResponse {
+  found: boolean;
+  actions: string[];
+  hop_count: number;
+}
+
 export interface StbAnomalyPattern {
   name: string;
   pattern: string;
@@ -692,4 +731,36 @@ export interface StbDiagnosticsResult {
   bugreport?: string;
   screenshot_error?: string;
   bugreport_error?: string;
+}
+
+export interface StbTestStep {
+  action: string;
+  expected_screen_id: string | null;
+  expected_activity: string | null;
+  wait_ms: number;
+  description: string;
+  collect_diagnostics: boolean;
+}
+
+export interface StbTestFlow {
+  id: string;
+  name: string;
+  description: string;
+  serial: string;
+  steps: StbTestStep[];
+  created_at: string;
+  updated_at: string;
+  source: string;
+}
+
+export interface StbTestFlowRun {
+  flow_id: string;
+  state: string;
+  current_step: number;
+  steps_passed: number;
+  steps_failed: number;
+  anomalies_detected: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
 }

@@ -25,10 +25,10 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, diagnostics, fingerprint as fp, screen_reader
+from . import action_executor, crawl_engine, diagnostics, fingerprint as fp, nav_model, screen_reader, test_flows
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import AnomalyPattern, CrawlStatus, DetectedAnomaly, LogcatEvent, ScreenState
+from .models import AnomalyPattern, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep
 
 logger = logging.getLogger("wifry.stb_automation.router")
 
@@ -200,6 +200,15 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
             settle_timeout_ms=req.settle_timeout_ms,
         )
 
+    # Record step if recording is active
+    if test_flows.is_recording():
+        test_flows.record_step(
+            action=result.action,
+            pre_fingerprint=result.pre_fingerprint,
+            post_fingerprint=result.post_fingerprint,
+            settle_ms=result.settle_ms,
+        )
+
     return NavigateResponse(
         action=result.action,
         pre_state=result.pre_state,
@@ -210,6 +219,96 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
         settle_method=result.settle_method,
         settle_ms=round(result.settle_ms, 1),
     )
+
+
+# ── Crawl (Phase 1C) ────────────────────────────────────────────────
+
+
+@router.post("/crawl/start")
+async def start_crawl(config: CrawlConfig) -> CrawlStatus:
+    """STB_AUTOMATION — Start a BFS crawl of the STB UI."""
+    _check_flag()
+    return await crawl_engine.start_crawl(config)
+
+
+@router.post("/crawl/stop")
+async def stop_crawl() -> CrawlStatus:
+    """STB_AUTOMATION — Stop the running crawl and persist the model."""
+    _check_flag()
+    return await crawl_engine.stop_crawl()
+
+
+@router.post("/crawl/step")
+async def crawl_step(config: CrawlConfig) -> dict:
+    """STB_AUTOMATION — Execute a single manual exploration step."""
+    _check_flag()
+    return await crawl_engine.crawl_step(config)
+
+
+# ── Navigation Model (Phase 1C) ────────────────────────────────────
+
+
+@router.get("/model")
+async def get_model(
+    device_id: str = Query(..., description="Device serial / ID"),
+) -> NavigationModel:
+    """STB_AUTOMATION — Get the full navigation model for a device."""
+    _check_flag()
+    model = nav_model.get_model(device_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"No model found for device '{device_id}'")
+    return model
+
+
+@router.get("/model/{node_id}")
+async def get_model_node(
+    node_id: str,
+    device_id: str = Query(..., description="Device serial / ID"),
+) -> ScreenNode:
+    """STB_AUTOMATION — Get a specific node from the navigation model."""
+    _check_flag()
+    model = nav_model.get_model(device_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"No model found for device '{device_id}'")
+    node = nav_model.get_node(model, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
+    return node
+
+
+class PathRequest(BaseModel):
+    device_id: str
+    from_node: str
+    to_node: str
+
+
+class PathResponse(BaseModel):
+    found: bool
+    actions: List[str]
+    hop_count: int
+
+
+@router.post("/model/path")
+async def find_path(req: PathRequest) -> PathResponse:
+    """STB_AUTOMATION — Find shortest action sequence between two nodes."""
+    _check_flag()
+    model = nav_model.get_model(req.device_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"No model found for device '{req.device_id}'")
+    path = nav_model.find_path(model, req.from_node, req.to_node)
+    if path is None:
+        return PathResponse(found=False, actions=[], hop_count=0)
+    return PathResponse(found=True, actions=path, hop_count=len(path))
+
+
+@router.delete("/model")
+async def delete_model(
+    device_id: str = Query(..., description="Device serial / ID"),
+) -> dict:
+    """STB_AUTOMATION — Delete the navigation model for a device."""
+    _check_flag()
+    deleted = nav_model.delete_model(device_id)
+    return {"deleted": deleted, "device_id": device_id}
 
 
 # ── Anomaly Detection (Phase 1D) ───────────────────────────────────
@@ -264,3 +363,139 @@ async def collect_diagnostics(req: DiagnosticsRequest) -> dict:
         reason=req.reason,
         severity=req.severity,
     )
+
+
+# ── Test Flows (Phase 1E) ──────────────────────────────────────────
+
+
+@router.get("/flows")
+async def list_flows() -> List[TestFlow]:
+    """STB_AUTOMATION — List all test flows."""
+    _check_flag()
+    return test_flows.list_flows()
+
+
+@router.get("/flows/{flow_id}")
+async def get_flow(flow_id: str) -> TestFlow:
+    """STB_AUTOMATION — Get a test flow by ID."""
+    _check_flag()
+    flow = test_flows.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    return flow
+
+
+class CreateFlowRequest(BaseModel):
+    name: str
+    serial: str
+    description: str = ""
+    steps: Optional[List[TestStep]] = None
+    source: str = "manual"
+
+
+@router.post("/flows")
+async def create_flow(req: CreateFlowRequest) -> TestFlow:
+    """STB_AUTOMATION — Create a new test flow."""
+    _check_flag()
+    return test_flows.create_flow(
+        name=req.name,
+        serial=req.serial,
+        description=req.description,
+        steps=req.steps,
+        source=req.source,
+    )
+
+
+class UpdateFlowRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    serial: Optional[str] = None
+    steps: Optional[List[TestStep]] = None
+
+
+@router.put("/flows/{flow_id}")
+async def update_flow(flow_id: str, req: UpdateFlowRequest) -> TestFlow:
+    """STB_AUTOMATION — Update a test flow (edit steps, rename, etc.)."""
+    _check_flag()
+    updates = req.model_dump(exclude_none=True)
+    flow = test_flows.update_flow(flow_id, updates)
+    if flow is None:
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    return flow
+
+
+@router.delete("/flows/{flow_id}")
+async def delete_flow(flow_id: str) -> dict:
+    """STB_AUTOMATION — Delete a test flow."""
+    _check_flag()
+    deleted = test_flows.delete_flow(flow_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
+    return {"deleted": True, "flow_id": flow_id}
+
+
+@router.post("/flows/{flow_id}/run")
+async def run_flow(flow_id: str) -> TestFlowRun:
+    """STB_AUTOMATION — Execute a test flow.
+
+    Replays steps sequentially with assertion checking and anomaly
+    monitoring.  Runs as a background task.
+    """
+    _check_flag()
+    try:
+        return await test_flows.run_flow(flow_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/flows/{flow_id}/stop")
+async def stop_flow(flow_id: str) -> dict:
+    """STB_AUTOMATION — Stop a running test flow."""
+    _check_flag()
+    run = await test_flows.stop_flow()
+    if run is None:
+        return {"status": "not_running"}
+    return {"status": "stopped", "run": run.model_dump()}
+
+
+@router.get("/flows/{flow_id}/results")
+async def get_flow_results(flow_id: str) -> dict:
+    """STB_AUTOMATION — Get results of the last flow run."""
+    _check_flag()
+    run = test_flows.get_run_status()
+    if run is None or run.flow_id != flow_id:
+        raise HTTPException(status_code=404, detail="No run results for this flow")
+    return run.model_dump()
+
+
+# ── Recording Control (Phase 1E) ───────────────────────────────────
+
+
+class StartRecordingRequest(BaseModel):
+    name: str
+    serial: str
+    description: str = ""
+
+
+@router.post("/flows/record/start")
+async def start_recording(req: StartRecordingRequest) -> TestFlow:
+    """STB_AUTOMATION — Start recording navigation steps into a new flow.
+
+    After starting, all /navigate calls will be recorded as steps.
+    """
+    _check_flag()
+    return test_flows.start_recording(
+        name=req.name,
+        serial=req.serial,
+        description=req.description,
+    )
+
+
+@router.post("/flows/record/stop")
+async def stop_recording() -> dict:
+    """STB_AUTOMATION — Stop recording and finalize the flow."""
+    _check_flag()
+    flow = test_flows.stop_recording()
+    if flow is None:
+        return {"status": "not_recording"}
+    return {"status": "stopped", "flow": flow.model_dump()}
