@@ -63,6 +63,17 @@ backend/app/experimental/video_capture/
 - Appears in: System > Tools tab (only when flag is enabled)
 - Shows device status, start/stop controls, and the live MJPEG feed
 
+## Pip Packages to Remove
+
+If removing this feature entirely, uninstall these from the RPi venv:
+
+```bash
+sudo /opt/wifry/backend/.venv/bin/pip uninstall opencv-python-headless numpy
+```
+
+These packages are **only** used by this experimental module. No other WiFry
+code depends on `cv2` or `numpy`. Removing them frees ~51 MB of disk space.
+
 ## How to Remove This Module
 
 1. Delete `backend/app/experimental/video_capture/` (this directory)
