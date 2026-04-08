@@ -280,6 +280,9 @@ async def apply_update(target_version: str = "") -> dict:
     await run("chown", "-R", "wifry:wifry", INSTALL_DIR, sudo=True, check=False)
     steps.append("chown: ok")
 
+    # Deploy system config files that live outside /opt/wifry
+    await _deploy_system_configs(steps)
+
     # Write VERSION file
     version_str = target_version.lstrip("v")
     try:
@@ -353,6 +356,35 @@ async def apply_update(target_version: str = "") -> dict:
         "new_version": version_str,
         "steps": steps,
     }
+
+
+# --- System config deployment ---
+
+async def _deploy_system_configs(steps: list) -> None:
+    """Copy system config files that live outside /opt/wifry.
+
+    These files are installed once during image build or install.sh
+    but need to be refreshed after a self-update since the repo
+    versions may have changed (e.g., new sudoers rules for new tools).
+    """
+    configs = [
+        # (source in repo, destination on system, permissions)
+        (f"{INSTALL_DIR}/setup/wifry-sudoers", "/etc/sudoers.d/wifry", "0440"),
+    ]
+
+    for src, dst, mode in configs:
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+
+        result = await run("cp", src, dst, sudo=True, check=False)
+        if result.success:
+            await run("chmod", mode, dst, sudo=True, check=False)
+            logger.info("Deployed system config: %s → %s", src, dst)
+            steps.append(f"deploy {Path(dst).name}: ok")
+        else:
+            logger.warning("Failed to deploy %s: %s", dst, result.stderr)
+            steps.append(f"deploy {Path(dst).name}: FAILED")
 
 
 # --- Rollback ---
