@@ -13,8 +13,14 @@ wifry ALL=(ALL) NOPASSWD: /usr/sbin/ip
 wifry ALL=(ALL) NOPASSWD: /sbin/iptables
 wifry ALL=(ALL) NOPASSWD: /usr/sbin/iptables
 
-# Packet capture
+# Packet capture (dumpcap for capture, tshark for post-processing, mergecap for segment merge)
+wifry ALL=(ALL) NOPASSWD: /usr/bin/dumpcap
 wifry ALL=(ALL) NOPASSWD: /usr/bin/tshark
+wifry ALL=(ALL) NOPASSWD: /usr/bin/mergecap
+wifry ALL=(ALL) NOPASSWD: /usr/bin/capinfos
+wifry ALL=(ALL) NOPASSWD: /usr/bin/nice
+wifry ALL=(ALL) NOPASSWD: /usr/bin/ionice
+wifry ALL=(ALL) NOPASSWD: /usr/bin/cat
 
 # WiFi AP management
 wifry ALL=(ALL) NOPASSWD: /usr/sbin/hostapd_cli
