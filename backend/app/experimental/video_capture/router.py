@@ -9,13 +9,17 @@ Routes:
 All endpoints return 404 if the feature flag is disabled.
 """
 
+import base64
 import logging
+from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ...services import feature_flags
-from . import device, streamer
+from . import analyzer, device, streamer
 
 logger = logging.getLogger("wifry.experimental.video_capture")
 
@@ -133,3 +137,56 @@ async def video_stream():
             "Expires": "0",
         },
     )
+
+
+# ── EXPERIMENTAL_VIDEO_CAPTURE — Frame Analysis ──────────────────────
+
+
+@router.get("/snapshot")
+async def video_snapshot():
+    """EXPERIMENTAL_VIDEO_CAPTURE — Return the current frame as base64 JPEG."""
+    _check_flag()
+
+    frame = analyzer.get_snapshot()
+    if frame is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No frame available. Is the stream running?",
+        )
+
+    return {
+        "image": base64.b64encode(frame).decode("ascii"),
+        "format": "jpeg",
+        "size_bytes": len(frame),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class AnalyzeRequest(BaseModel):
+    """EXPERIMENTAL_VIDEO_CAPTURE — Optional overrides for frame analysis."""
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/analyze")
+async def analyze_video_frame(request: AnalyzeRequest = AnalyzeRequest()):
+    """EXPERIMENTAL_VIDEO_CAPTURE — Analyze the current frame with AI vision.
+
+    Captures the latest HDMI frame and sends it to the configured AI
+    provider to identify screen type, focused element, and navigation state.
+    """
+    _check_flag()
+
+    frame = analyzer.get_snapshot()
+    if frame is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No frame available. Is the stream running?",
+        )
+
+    result = await analyzer.analyze_frame(
+        frame_jpeg=frame,
+        provider=request.provider,
+        model=request.model,
+    )
+    return result.model_dump()
