@@ -52,6 +52,10 @@ DEFAULTS: Dict[str, dict] = {
     "hdmi_capture": {"enabled": False, "label": "HDMI Capture", "description": "Capture HDMI output from STBs for visual analysis.", "category": "advanced",
         "disabled_reason": "Requires an Elgato Cam Link 4K (or compatible UVC USB capture device) physically plugged into the RPi's USB port. v4l-utils is installed but no device detected."},
 
+    # EXPERIMENTAL_VIDEO_CAPTURE — Experimental live HDMI video stream
+    "experimental_video_capture": {"enabled": False, "label": "Live Video Stream (Experimental)", "description": "MJPEG live stream from a UVC HDMI capture device. Experimental — may be removed.", "category": "experimental",
+        "disabled_reason": "Experimental. Requires Elgato Cam Link 4K (or compatible UVC device) and opencv-python."},
+
     # Sharing features — supported path stays session-centric; live access is opt-in
     "sharing_tunnel": {"enabled": False, "label": "Live Remote Access", "description": "Expose the WiFry UI through a temporary public URL for live troubleshooting.", "category": "sharing",
         "disabled_reason": "Experimental surface. Off by default. Use Session bundles for standard evidence sharing."},

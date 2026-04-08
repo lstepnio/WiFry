@@ -69,6 +69,15 @@ async def lifespan(app: FastAPI):
                 await adb_manager.stop_logcat(sess_id)
             except Exception:
                 pass
+        # EXPERIMENTAL_VIDEO_CAPTURE — Stop streamer if running
+        try:
+            from .experimental.video_capture import streamer as _exp_streamer
+            if _exp_streamer.is_running():
+                _exp_streamer.stop_capture()
+                logger.info("[EXPERIMENTAL_VIDEO_CAPTURE] Streamer stopped during shutdown")
+        except ImportError:
+            pass
+
         logger.info("Cleanup complete")
     except Exception as e:
         logger.error("Error during shutdown cleanup: %s", e)
@@ -165,6 +174,15 @@ app.include_router(network_config.router)
 app.include_router(sharing.router)
 app.include_router(system.router)
 app.include_router(hw_tests.router)
+
+# EXPERIMENTAL_VIDEO_CAPTURE — Guarded registration; no-op if import fails or flag disabled.
+# Remove this block and the experimental/video_capture/ package to fully excise.
+try:
+    from .experimental.video_capture.router import router as _exp_video_router
+    app.include_router(_exp_video_router)
+    logger.debug("[EXPERIMENTAL_VIDEO_CAPTURE] Router registered")
+except Exception as _exp_err:
+    logger.debug("[EXPERIMENTAL_VIDEO_CAPTURE] Module not loaded: %s", _exp_err)
 
 
 @app.get("/api/v1/health")

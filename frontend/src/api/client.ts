@@ -353,3 +353,16 @@ export async function activateGremlin(intensity: number): Promise<GremlinStatus>
 export async function deactivateGremlin(): Promise<GremlinStatus> {
   return request('/gremlin/deactivate', { method: 'POST' });
 }
+
+// EXPERIMENTAL_VIDEO_CAPTURE — Live video stream endpoints
+export async function getVideoStatus(): Promise<{ device: Record<string, unknown>; streaming: boolean; clients: number }> {
+  return request('/experimental/video/status');
+}
+
+export async function startVideoStream(): Promise<{ status: string; device?: string; resolution?: string; fps?: number; message?: string }> {
+  return request('/experimental/video/start', { method: 'POST' });
+}
+
+export async function stopVideoStream(): Promise<{ status: string }> {
+  return request('/experimental/video/stop', { method: 'POST' });
+}
