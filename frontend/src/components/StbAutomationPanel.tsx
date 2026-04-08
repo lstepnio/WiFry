@@ -629,11 +629,23 @@ export default function StbAutomationPanel() {
                       <span className="text-gray-500 dark:text-gray-400">Activity: </span>
                       <span className="text-gray-900 dark:text-white">{screenState.state.activity || '\u2014'}</span>
                     </div>
-                    {screenState.state.focused_element && (
+                    {/* Focused Context — rich multi-signal summary */}
+                    {screenState.state.focused_context && (
                       <div className="rounded border border-purple-200 bg-purple-50 p-2 dark:border-purple-800 dark:bg-purple-900/20">
-                        <span className="text-purple-600 dark:text-purple-400">Focused: </span>
-                        <span className="font-medium text-purple-900 dark:text-purple-100">
-                          {screenState.state.focused_element.text || screenState.state.focused_element.resource_id || screenState.state.focused_element.content_desc || screenState.state.focused_element.class_name || screenState.state.focused_element.package || screenState.state.focused_element.bounds || '(unnamed element)'}
+                        <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-purple-500 dark:text-purple-400">Context</div>
+                        <div className="space-y-0.5 text-[11px] text-purple-900 dark:text-purple-100">
+                          {screenState.state.focused_context.split(' | ').map((part, i) => (
+                            <div key={i}>{part}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Fragments */}
+                    {screenState.state.fragments?.length > 0 && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400">Fragments: </span>
+                        <span className="font-mono text-[11px] text-gray-900 dark:text-white">
+                          {screenState.state.fragments.join(', ')}
                         </span>
                       </div>
                     )}

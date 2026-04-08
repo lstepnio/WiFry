@@ -23,10 +23,20 @@ logger = logging.getLogger("wifry.stb_automation.logcat_monitor")
 
 MAX_EVENTS = 50
 
-# Default logcat tag filters — only activity/window lifecycle events
-DEFAULT_TAGS = ["ActivityManager:I", "WindowManager:I"]
+# Default logcat tag filters — activity, window, fragment, and view lifecycle
+DEFAULT_TAGS = [
+    "ActivityManager:I",
+    "WindowManager:I",
+    "FragmentManager:D",     # fragment lifecycle — add/remove/attach/detach
+    "ViewRootImpl:I",        # view focus changes
+    "InputTransport:D",      # input event delivery
+    "RecyclerView:D",        # list scroll/focus in RecyclerView
+    "AccessibilityEvent:D",  # accessibility focus changes
+]
 
-# Patterns for event extraction from logcat messages
+# Patterns for event extraction from logcat messages.
+# These are matched against the full logcat message text; tag-specific
+# patterns use the tag parameter in _parse_logcat_event().
 _EVENT_PATTERNS = [
     # ActivityManager: Displayed com.foo/.BarActivity: +500ms
     (
@@ -55,6 +65,36 @@ _EVENT_PATTERNS = [
         "FOCUS_CHANGED",
         re.compile(
             r"Focus\s+chang\w+.*?(\S+?)/(\S+?)(?:\s|\}|$)"
+        ),
+    ),
+    # Fragment lifecycle: onAttach, onResume, onCreateView for a Fragment
+    # FragmentManager: moveto RESUMED: SomeFragment{hash ...}
+    # FragmentManager: Lifecycle RESUMED for SomeFragment{hash}
+    (
+        "FRAGMENT_LIFECYCLE",
+        re.compile(
+            r"(?:moveto\s+\w+|Lifecycle\s+\w+\s+for)\s*:?\s*(\w+Fragment\w*)\{",
+        ),
+    ),
+    # Fragment added: Added: SomeFragment{hash}
+    (
+        "FRAGMENT_ADDED",
+        re.compile(
+            r"(?:Added|Attached|moveto\s+CREATED).*?(\w+Fragment\w*)\{",
+        ),
+    ),
+    # AccessibilityEvent: TYPE_VIEW_FOCUSED; ... ClassName: android.widget.TextView; Text: [Home];
+    (
+        "A11Y_FOCUS",
+        re.compile(
+            r"TYPE_VIEW_FOCUSED.*?(?:Text:\s*\[([^\]]*)\]|ClassName:\s*(\S+))",
+        ),
+    ),
+    # View focus: oldFocus=... newFocus=com.foo:id/some_view
+    (
+        "VIEW_FOCUS",
+        re.compile(
+            r"(?:newFocus|requestFocus|gainFocus).*?(?:(\S+:id/\S+)|(\S+View\w*))",
         ),
     ),
 ]
@@ -204,14 +244,51 @@ def _parse_logcat_event(
     for event_type, pattern in _EVENT_PATTERNS:
         m = pattern.search(message)
         if m:
-            return LogcatEvent(
-                event_type=event_type,
-                package=m.group(1),
-                activity=m.group(2) if m.lastindex and m.lastindex >= 2 else "",
-                detail=message.strip(),
-                timestamp=timestamp,
-                raw=raw,
-            )
+            # Different patterns capture different group structures
+            if event_type in ("ACTIVITY_DISPLAYED", "ACTIVITY_RESUMED",
+                              "ACTIVITY_PAUSED", "FOCUS_CHANGED"):
+                return LogcatEvent(
+                    event_type=event_type,
+                    package=m.group(1),
+                    activity=m.group(2) if m.lastindex and m.lastindex >= 2 else "",
+                    detail=message.strip(),
+                    timestamp=timestamp,
+                    raw=raw,
+                )
+            elif event_type in ("FRAGMENT_LIFECYCLE", "FRAGMENT_ADDED"):
+                # Group 1 is the fragment class name
+                return LogcatEvent(
+                    event_type=event_type,
+                    package="",
+                    activity=m.group(1),  # fragment name goes in activity field
+                    detail=message.strip(),
+                    timestamp=timestamp,
+                    raw=raw,
+                )
+            elif event_type == "A11Y_FOCUS":
+                # Group 1 = text, Group 2 = class name
+                text = m.group(1) or ""
+                cls = m.group(2) or ""
+                return LogcatEvent(
+                    event_type=event_type,
+                    package="",
+                    activity=text or cls,
+                    detail=message.strip(),
+                    timestamp=timestamp,
+                    raw=raw,
+                )
+            elif event_type == "VIEW_FOCUS":
+                # Group 1 = resource_id, Group 2 = view class
+                resource_id = m.group(1) or ""
+                view_class = m.group(2) or ""
+                return LogcatEvent(
+                    event_type=event_type,
+                    package="",
+                    activity=resource_id or view_class,
+                    detail=message.strip(),
+                    timestamp=timestamp,
+                    raw=raw,
+                )
     return None
 
 

@@ -630,6 +630,9 @@ export interface StbScreenState {
   activity: string;
   ui_elements: StbUIElement[];
   focused_element: StbUIElement | null;
+  focused_context: string;
+  window_title: string;
+  fragments: string[];
   recent_events: StbLogcatEvent[];
   timestamp: string;
 }

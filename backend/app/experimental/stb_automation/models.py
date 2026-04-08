@@ -52,6 +52,9 @@ class ScreenState(BaseModel):
     activity: str = ""
     ui_elements: List[UIElement] = []
     focused_element: Optional[UIElement] = None
+    focused_context: str = ""  # human-readable context from all signals
+    window_title: str = ""  # from dumpsys window
+    fragments: List[str] = []  # active fragment names from dumpsys activity top
     recent_events: List[LogcatEvent] = []
     timestamp: str = ""
 
