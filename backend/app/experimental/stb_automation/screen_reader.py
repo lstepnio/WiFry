@@ -26,22 +26,56 @@ logger = logging.getLogger("wifry.stb_automation.screen_reader")
 async def read_foreground_activity(serial: str) -> tuple[str, str]:
     """Return (package, activity) of the foreground window.
 
-    Uses ``dumpsys window windows`` and looks for the ``mCurrentFocus``
-    or ``mFocusedApp`` line.  Falls back to empty strings on parse
-    failure.
+    Tries multiple dumpsys sources because STBs vary widely:
+      1. ``dumpsys window displays`` — modern Android TV / operator STBs
+      2. ``dumpsys window windows``  — standard AOSP / older devices
+      3. ``dumpsys activity activities`` — fallback via ActivityManager
+
+    Falls back to empty strings on parse failure.
     """
+    # Try dumpsys window displays first (works on most Android TV STBs)
+    result = await adb_manager.shell(serial, "dumpsys window displays")
+    pkg, act = _parse_foreground(result.stdout)
+    if pkg:
+        return pkg, act
+
+    # Try dumpsys window windows (standard AOSP)
     result = await adb_manager.shell(serial, "dumpsys window windows")
-    return _parse_foreground(result.stdout)
+    pkg, act = _parse_foreground(result.stdout)
+    if pkg:
+        return pkg, act
+
+    # Fallback: dumpsys activity activities
+    result = await adb_manager.shell(serial, "dumpsys activity activities")
+    pkg, act = _parse_activity_dumpsys(result.stdout)
+    return pkg, act
 
 
 def _parse_foreground(dumpsys_output: str) -> tuple[str, str]:
-    """Extract package/activity from dumpsys output."""
-    # Look for: mCurrentFocus=Window{... com.foo.bar/com.foo.bar.MainActivity}
+    """Extract package/activity from dumpsys window output."""
     for pattern in (
+        # mCurrentFocus=Window{... u0 com.foo/com.foo.MainActivity}
         r"mCurrentFocus=.*\s+(\S+)/(\S+)\}",
+        # mFocusedApp=ActivityRecord{... u0 com.foo/.MainActivity ...}
         r"mFocusedApp=.*\s+(\S+)/(\S+)\s",
+        # mFocusedWindow=Window{... u0 com.foo/com.foo.MainActivity}
+        r"mFocusedWindow=.*\s+(\S+)/(\S+)\}",
     ):
         m = re.search(pattern, dumpsys_output)
+        if m:
+            return m.group(1), m.group(2)
+    return "", ""
+
+
+def _parse_activity_dumpsys(activity_output: str) -> tuple[str, str]:
+    """Extract package/activity from dumpsys activity output."""
+    for pattern in (
+        # mResumedActivity: ActivityRecord{... u0 com.foo/.MainActivity t123}
+        r"mResumedActivity:.*\s+(\S+)/(\S+)\s",
+        # mFocusedActivity: ActivityRecord{... u0 com.foo/.MainActivity t123}
+        r"mFocusedActivity:.*\s+(\S+)/(\S+)\s",
+    ):
+        m = re.search(pattern, activity_output)
         if m:
             return m.group(1), m.group(2)
     return "", ""
