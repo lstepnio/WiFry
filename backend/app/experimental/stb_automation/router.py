@@ -25,10 +25,10 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, crawl_engine, diagnostics, fingerprint as fp, nav_model, screen_reader, test_flows
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, screen_reader, test_flows
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import AnomalyPattern, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep
+from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep
 
 logger = logging.getLogger("wifry.stb_automation.router")
 
@@ -499,3 +499,37 @@ async def stop_recording() -> dict:
     if flow is None:
         return {"status": "not_recording"}
     return {"status": "stopped", "flow": flow.model_dump()}
+
+
+# ── Chaos Mode (Phase 1F) ──────────────────────────────────────────
+
+
+@router.post("/chaos/start")
+async def start_chaos(config: ChaosConfig) -> ChaosResult:
+    """STB_AUTOMATION — Start autonomous chaos exploration.
+
+    Sends weighted-random key presses while monitoring for anomalies.
+    Configurable duration, seed, key weights, and anomaly response.
+    """
+    _check_flag()
+    return await chaos_engine.start_chaos(config)
+
+
+@router.post("/chaos/stop")
+async def stop_chaos() -> dict:
+    """STB_AUTOMATION — Stop the running chaos session."""
+    _check_flag()
+    result = await chaos_engine.stop_chaos()
+    if result is None:
+        return {"status": "not_running"}
+    return result.model_dump()
+
+
+@router.get("/chaos/status")
+async def chaos_status() -> dict:
+    """STB_AUTOMATION — Current chaos run status + anomalies."""
+    _check_flag()
+    result = chaos_engine.get_status()
+    if result is None:
+        return {"state": "idle"}
+    return result.model_dump()

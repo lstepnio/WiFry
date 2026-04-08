@@ -512,3 +512,19 @@ export async function startStbRecording(name: string, serial: string, descriptio
 export async function stopStbRecording(): Promise<Record<string, unknown>> {
   return request('/experimental/stb/flows/record/stop', { method: 'POST' });
 }
+
+// STB_AUTOMATION — Chaos mode endpoints
+export async function startStbChaos(config: import('../types').StbChaosConfig): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/start', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function stopStbChaos(): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/stop', { method: 'POST' });
+}
+
+export async function getStbChaosStatus(): Promise<import('../types').StbChaosResult> {
+  return request('/experimental/stb/chaos/status');
+}

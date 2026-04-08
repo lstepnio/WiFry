@@ -764,3 +764,22 @@ export interface StbTestFlowRun {
   completed_at: string | null;
   error: string | null;
 }
+
+export interface StbChaosConfig {
+  serial: string;
+  duration_secs?: number;
+  seed?: number | null;
+  key_weights?: Record<string, number>;
+  on_anomaly?: string;
+  enable_vision_checks?: boolean;
+  vision_check_interval_secs?: number;
+}
+
+export interface StbChaosResult {
+  state: string;
+  duration_secs: number;
+  keys_sent: number;
+  screens_visited: number;
+  anomalies: StbDetectedAnomaly[];
+  seed_used: number;
+}

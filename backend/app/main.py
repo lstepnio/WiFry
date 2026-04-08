@@ -77,13 +77,16 @@ async def lifespan(app: FastAPI):
                 logger.info("[EXPERIMENTAL_VIDEO_CAPTURE] Streamer stopped during shutdown")
         except ImportError:
             pass
-        # STB_AUTOMATION — Stop logcat monitor if running
+        # STB_AUTOMATION — Stop logcat monitor, crawl, and chaos if running
         try:
             from .experimental.stb_automation.logcat_monitor import get_monitor as _get_stb_monitor
+            from .experimental.stb_automation import crawl_engine as _stb_crawl, chaos_engine as _stb_chaos
             _stb_monitor = _get_stb_monitor()
             if _stb_monitor.is_active:
                 await _stb_monitor.stop()
                 logger.info("[STB_AUTOMATION] Logcat monitor stopped during shutdown")
+            await _stb_crawl.stop_crawl()
+            await _stb_chaos.stop_chaos()
         except ImportError:
             pass
 
