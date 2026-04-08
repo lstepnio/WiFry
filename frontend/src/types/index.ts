@@ -108,7 +108,10 @@ export interface SystemInfo {
 
 // Capture types
 
-export type CaptureStatus = 'running' | 'completed' | 'stopped' | 'error';
+export type CaptureStatus = 'running' | 'processing' | 'completed' | 'stopped' | 'error';
+export type HealthBadge = 'healthy' | 'degraded' | 'unhealthy' | 'insufficient';
+export type Confidence = 'high' | 'medium' | 'low';
+export type AnalysisPack = 'connectivity' | 'dns' | 'https' | 'streaming' | 'security' | 'custom';
 
 export interface CaptureFilters {
   host?: string | null;
@@ -123,6 +126,7 @@ export interface CaptureInfo {
   name: string;
   interface: string;
   status: CaptureStatus;
+  pack: string;
   filters: CaptureFilters;
   bpf_expression: string;
   started_at?: string | null;
@@ -131,7 +135,137 @@ export interface CaptureInfo {
   file_size_bytes: number;
   pcap_path: string;
   error?: string | null;
+  health_badge?: string | null;
+  has_summary: boolean;
+  has_analysis: boolean;
 }
+
+// Analysis Pack
+
+export interface PackConfig {
+  id: AnalysisPack;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  bpf: string;
+  default_duration_secs: number;
+  max_duration_secs: number;
+  queries: string[];
+  focus_areas: string[];
+}
+
+// Capture Summary (typed stats)
+
+export interface ProtocolEntry {
+  name: string;
+  frames: number;
+  bytes: number;
+  pct: number;
+}
+
+export interface TcpHealth {
+  total_segments: number;
+  retransmission_count: number;
+  retransmission_pct: number;
+  fast_retransmission_count: number;
+  duplicate_ack_count: number;
+  zero_window_count: number;
+  rst_count: number;
+  out_of_order_count: number;
+  window_full_count: number;
+}
+
+export interface Conversation {
+  src: string;
+  src_port: number;
+  dst: string;
+  dst_port: number;
+  protocol: string;
+  frames: number;
+  bytes: number;
+  duration_secs: number;
+  bps: number;
+}
+
+export interface DnsSummary {
+  total_queries: number;
+  total_responses: number;
+  unique_domains: number;
+  nxdomain_count: number;
+  servfail_count: number;
+  timeout_count: number;
+  avg_latency_ms: number;
+  max_latency_ms: number;
+  top_domains: Array<{ domain: string; count: number }>;
+}
+
+export interface ThroughputSample {
+  interval_start: number;
+  interval_end: number;
+  frames: number;
+  bytes: number;
+  bps: number;
+}
+
+export interface ThroughputSummary {
+  samples: ThroughputSample[];
+  avg_bps: number;
+  max_bps: number;
+  min_bps: number;
+  coefficient_of_variation: number;
+}
+
+export interface ExpertEntry {
+  severity: string;
+  group: string;
+  summary: string;
+  count: number;
+}
+
+export interface AnomalyFlag {
+  metric: string;
+  value: number;
+  threshold: number;
+  severity: string;
+  label: string;
+}
+
+export interface InterestAnnotations {
+  anomaly_flags: AnomalyFlag[];
+  health_badge: HealthBadge;
+}
+
+export interface CaptureSummary {
+  meta: {
+    capture_id: string;
+    pack: string;
+    interface: string;
+    duration_secs: number;
+    total_packets: number;
+    total_bytes: number;
+  };
+  protocol_breakdown?: {
+    total_frames: number;
+    total_bytes: number;
+    protocols: ProtocolEntry[];
+    unencrypted_pct: number;
+  } | null;
+  tcp_health?: TcpHealth | null;
+  conversations: Conversation[];
+  dns?: DnsSummary | null;
+  throughput?: ThroughputSummary | null;
+  expert?: {
+    entries: ExpertEntry[];
+    error_count: number;
+    warning_count: number;
+    note_count: number;
+  } | null;
+  endpoints: Array<{ ip: string; frames: number; bytes: number }>;
+  interest: InterestAnnotations;
+}
+
+// V1 Analysis models (kept for compat)
 
 export interface AnalysisIssue {
   severity: string;
@@ -146,6 +280,47 @@ export interface AnalysisResult {
   summary: string;
   issues: AnalysisIssue[];
   statistics: Record<string, unknown>;
+  provider: string;
+  model: string;
+  tokens_used: number;
+  analyzed_at?: string | null;
+}
+
+// V2 Analysis models
+
+export interface EvidenceCitation {
+  metric: string;
+  value: string;
+  context: string;
+}
+
+export interface Finding {
+  id: string;
+  title: string;
+  severity: string;
+  confidence: Confidence;
+  category: string;
+  description: string;
+  evidence: EvidenceCitation[];
+  affected_flows: string[];
+  likely_causes: string[];
+  next_steps: string[];
+  cross_references: string[];
+}
+
+export interface InsufficientEvidenceNote {
+  area: string;
+  reason: string;
+  suggestion: string;
+}
+
+export interface AnalysisResultV2 {
+  capture_id: string;
+  pack: string;
+  summary: string;
+  health_badge: HealthBadge;
+  findings: Finding[];
+  insufficient_evidence: InsufficientEvidenceNote[];
   provider: string;
   model: string;
   tokens_used: number;

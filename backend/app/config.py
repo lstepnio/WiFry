@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     ai_provider: str = "anthropic"  # "anthropic" or "openai"
 
+    # Capture v2
+    capture_max_concurrent: int = 2
+    capture_ring_segment_kb: int = 10240  # 10 MB per segment
+    capture_ring_max_files: int = 10  # Max 100 MB per capture
+    capture_min_disk_mb: int = 200  # Minimum free disk for new capture
+    capture_retention_max_count: int = 20
+    capture_retention_max_mb: int = 500
+    capture_retention_max_days: int = 7
+
     # DNS
     dns_enabled: bool = True
     coredns_binary: str = "/usr/local/bin/coredns"

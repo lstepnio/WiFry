@@ -67,82 +67,130 @@ class TestMockShell:
 # ---- services/ai_analyzer.py ----
 
 class TestAIAnalyzer:
-    async def test_build_analysis_prompt(self):
-        from app.services.ai_analyzer import _build_analysis_prompt
-        from app.models.capture import AnalysisRequest
+    async def test_build_v2_prompt(self):
+        from app.services.ai_analyzer import _build_v2_prompt
+        from app.models.capture import AnalysisRequest, CaptureSummary, CaptureMeta
 
+        summary = CaptureSummary(
+            meta=CaptureMeta(capture_id="test", pack="connectivity", total_packets=100),
+        )
         req = AnalysisRequest(
             prompt="Analyze for issues",
             focus=["retransmissions", "latency"],
         )
-        stats = {"protocol_hierarchy": "TCP: 900 frames", "io_stats": "120 frames/sec"}
-        prompt = _build_analysis_prompt(stats, req)
-        assert "Analyze for issues" in prompt
-        assert "retransmissions" in prompt
-        assert "Protocol Hierarchy" in prompt
-        assert "Io Stats" in prompt
+        prompt = _build_v2_prompt(summary, "connectivity", req)
+        assert "Connectivity Check" in prompt
+        assert "CaptureSummary" in prompt
 
-    async def test_mock_analysis(self):
-        from app.services.ai_analyzer import _mock_analysis
+    async def test_mock_analysis_v2(self):
+        from app.services.ai_analyzer import _mock_analysis_v2
 
-        result = _mock_analysis("test-cap-123", "anthropic")
+        result = _mock_analysis_v2("test-cap-123", "custom", "anthropic")
         assert result.capture_id == "test-cap-123"
         assert result.provider == "anthropic"
         assert result.model == "mock"
         assert result.tokens_used == 0
-        assert len(result.issues) == 3
+        assert len(result.findings) == 3
         assert result.summary
-        assert result.statistics
-        # Check issue structure
-        issue = result.issues[0]
-        assert issue.severity == "high"
-        assert issue.category == "retransmissions"
-        assert issue.description
-        assert issue.recommendation
+        assert result.health_badge
+        # Check finding structure
+        finding = result.findings[0]
+        assert finding.severity == "high"
+        assert finding.category == "retransmissions"
+        assert finding.description
+        assert finding.confidence
+        assert len(finding.evidence) > 0
+        assert finding.evidence[0].metric
+        assert finding.evidence[0].value
 
-    async def test_parse_ai_response_valid_json(self):
-        from app.services.ai_analyzer import _parse_ai_response
+    async def test_parse_v2_response_valid_json(self):
+        from app.services.ai_analyzer import _parse_v2_response
         import json
 
         content = json.dumps({
             "summary": "Everything looks fine.",
-            "issues": [
+            "health_badge": "healthy",
+            "findings": [
                 {
+                    "id": "F1",
+                    "title": "Normal DNS",
                     "severity": "low",
+                    "confidence": "high",
                     "category": "dns",
-                    "description": "Normal DNS",
+                    "description": "Normal DNS resolution",
+                    "evidence": [
+                        {"metric": "dns.avg_latency_ms", "value": "10ms", "context": "Normal"}
+                    ],
                     "affected_flows": [],
-                    "recommendation": "No action",
+                    "likely_causes": [],
+                    "next_steps": ["No action"],
                 }
             ],
-            "statistics": {"total_packets": 500},
+            "insufficient_evidence": [],
         })
-        result = _parse_ai_response("cap-1", content, "openai", "gpt-4o", 100)
+        result = _parse_v2_response("cap-1", "custom", content, "openai", "gpt-4o", 100)
         assert result.summary == "Everything looks fine."
-        assert len(result.issues) == 1
+        assert len(result.findings) == 1
         assert result.provider == "openai"
         assert result.tokens_used == 100
+        # Confidence downgraded from HIGH to MEDIUM (only 1 evidence citation)
+        assert result.findings[0].confidence.value == "medium"
 
-    async def test_parse_ai_response_code_block(self):
-        from app.services.ai_analyzer import _parse_ai_response
+    async def test_parse_v2_response_code_block(self):
+        from app.services.ai_analyzer import _parse_v2_response
         import json
 
         inner = json.dumps({
             "summary": "Code block test.",
-            "issues": [],
-            "statistics": {},
+            "health_badge": "healthy",
+            "findings": [],
+            "insufficient_evidence": [],
         })
         content = f"```json\n{inner}\n```"
-        result = _parse_ai_response("cap-2", content, "anthropic", "claude", 50)
+        result = _parse_v2_response("cap-2", "custom", content, "anthropic", "claude", 50)
         assert result.summary == "Code block test."
 
-    async def test_parse_ai_response_invalid_json(self):
-        from app.services.ai_analyzer import _parse_ai_response
+    async def test_parse_v2_response_invalid_json(self):
+        from app.services.ai_analyzer import _parse_v2_response
 
-        result = _parse_ai_response("cap-3", "This is not JSON at all.", "anthropic", "claude", 10)
+        result = _parse_v2_response("cap-3", "custom", "This is not JSON at all.", "anthropic", "claude", 10)
         # Should fall back to using content as summary
         assert "not JSON" in result.summary
         assert result.provider == "anthropic"
+
+    async def test_parse_v2_drops_findings_without_evidence(self):
+        from app.services.ai_analyzer import _parse_v2_response
+        import json
+
+        content = json.dumps({
+            "summary": "Test guardrail.",
+            "health_badge": "degraded",
+            "findings": [
+                {
+                    "id": "F1",
+                    "title": "Has evidence",
+                    "severity": "high",
+                    "confidence": "high",
+                    "category": "retransmissions",
+                    "description": "With evidence",
+                    "evidence": [{"metric": "tcp_health.retransmission_pct", "value": "5%", "context": "High"}],
+                },
+                {
+                    "id": "F2",
+                    "title": "No evidence",
+                    "severity": "medium",
+                    "confidence": "low",
+                    "category": "latency",
+                    "description": "Without evidence",
+                    "evidence": [],
+                },
+            ],
+            "insufficient_evidence": [],
+        })
+        result = _parse_v2_response("cap-4", "custom", content, "anthropic", "claude", 100)
+        # F2 should be dropped — no evidence
+        assert len(result.findings) == 1
+        assert result.findings[0].id == "F1"
 
     async def test_analyze_capture_mock_mode(self):
         from app.services.ai_analyzer import analyze_capture

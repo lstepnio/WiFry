@@ -6,10 +6,11 @@ import type {
   ActiveSessionInfo,
   AdbDevice,
   AdbShellResult,
-  AnalysisResult,
+  AnalysisResultV2,
   ApStatus,
   CaptureFilters,
   CaptureInfo,
+  CaptureSummary,
   FeatureFlags,
   GremlinStatus,
   ImpairmentConfig,
@@ -17,6 +18,7 @@ import type {
   InterfaceInfo,
   LogcatLine,
   LogcatSession,
+  PackConfig,
   Profile,
   ProfileList,
   ProxyStatus,
@@ -158,9 +160,14 @@ export async function clearWifiImpairments(): Promise<void> {
 
 // --- Captures ---
 
+export async function getPacks(): Promise<PackConfig[]> {
+  return request('/captures/packs');
+}
+
 export async function startCapture(params: {
   interface: string;
   name?: string;
+  pack?: string;
   filters?: CaptureFilters;
   max_packets?: number;
   max_duration_secs?: number;
@@ -188,17 +195,29 @@ export async function deleteCapture(id: string): Promise<void> {
   await request(`/captures/${id}`, { method: 'DELETE' });
 }
 
+export async function getCaptureSummary(id: string): Promise<CaptureSummary> {
+  return request(`/captures/${id}/summary`);
+}
+
+export async function getCaptureStatus(): Promise<{
+  active_captures: number;
+  max_concurrent: number;
+  storage: { capture_count: number; total_mb: number; max_storage_mb: number; usage_pct: number };
+}> {
+  return request('/captures/status');
+}
+
 export async function analyzeCapture(
   id: string,
-  params?: { provider?: string; prompt?: string; focus?: string[] }
-): Promise<AnalysisResult> {
+  params?: { provider?: string; prompt?: string; focus?: string[]; pack?: string }
+): Promise<AnalysisResultV2> {
   return request(`/captures/${id}/analyze`, {
     method: 'POST',
     body: JSON.stringify(params ?? {}),
   });
 }
 
-export async function getAnalysis(id: string): Promise<AnalysisResult> {
+export async function getAnalysis(id: string): Promise<AnalysisResultV2> {
   return request(`/captures/${id}/analysis`);
 }
 
