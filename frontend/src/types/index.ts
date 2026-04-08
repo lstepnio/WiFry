@@ -783,3 +783,35 @@ export interface StbChaosResult {
   anomalies: StbDetectedAnomaly[];
   seed_used: number;
 }
+
+export interface StbNLGenerateRequest {
+  prompt: string;
+  serial: string;
+  device_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface StbNLRefineRequest {
+  refinement: string;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface StbVisionEnrichment {
+  enriched: boolean;
+  error?: string;
+  screen_type?: string;
+  screen_title?: string | null;
+  focused_element?: {
+    element_type: string;
+    label: string;
+    position: string;
+    confidence: string;
+  } | null;
+  navigation_path?: string[] | null;
+  visible_text_summary?: string;
+  provider?: string;
+  model?: string;
+  tokens_used?: number;
+}

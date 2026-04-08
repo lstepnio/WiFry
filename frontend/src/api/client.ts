@@ -528,3 +528,25 @@ export async function stopStbChaos(): Promise<import('../types').StbChaosResult>
 export async function getStbChaosStatus(): Promise<import('../types').StbChaosResult> {
   return request('/experimental/stb/chaos/status');
 }
+
+// STB_AUTOMATION — Natural language test generation endpoints
+export async function generateStbFlow(params: import('../types').StbNLGenerateRequest): Promise<import('../types').StbTestFlow> {
+  return request('/experimental/stb/nl/generate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function refineStbFlow(flowId: string, params: import('../types').StbNLRefineRequest): Promise<import('../types').StbTestFlow> {
+  return request(`/experimental/stb/nl/refine/${flowId}`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+// STB_AUTOMATION — Vision enrichment endpoint
+export async function enrichStbState(serial: string): Promise<import('../types').StbVisionEnrichment> {
+  return request(`/experimental/stb/state/enrich?serial=${encodeURIComponent(serial)}`, {
+    method: 'POST',
+  });
+}

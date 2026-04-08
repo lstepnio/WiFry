@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, screen_reader, test_flows
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
 from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep
@@ -533,3 +533,83 @@ async def chaos_status() -> dict:
     if result is None:
         return {"state": "idle"}
     return result.model_dump()
+
+
+# ── Natural Language Testing (Phase 1G) ───────────────────────────────
+
+
+class NLGenerateRequest(BaseModel):
+    prompt: str
+    serial: str
+    device_id: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/nl/generate")
+async def nl_generate(req: NLGenerateRequest) -> TestFlow:
+    """STB_AUTOMATION — Generate a test flow from natural language.
+
+    Translates a plain-English test description into an executable
+    TestFlow with keyed navigation steps, waits, and assertions.
+    Uses the navigation model (if available) for realistic paths.
+    """
+    _check_flag()
+    try:
+        return await nl_runner.generate_flow(
+            prompt=req.prompt,
+            serial=req.serial,
+            device_id=req.device_id,
+            provider=req.provider,
+            model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("[STB_AUTOMATION] NL generate failed")
+        raise HTTPException(status_code=500, detail=f"NL generation failed: {e}")
+
+
+class NLRefineRequest(BaseModel):
+    refinement: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/nl/refine/{flow_id}")
+async def nl_refine(flow_id: str, req: NLRefineRequest) -> TestFlow:
+    """STB_AUTOMATION — Refine an existing flow with a follow-up prompt.
+
+    Sends the current flow + refinement instruction to the AI,
+    which returns an updated version of the flow.
+    """
+    _check_flag()
+    try:
+        return await nl_runner.refine_flow(
+            flow_id=flow_id,
+            refinement_prompt=req.refinement,
+            provider=req.provider,
+            model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("[STB_AUTOMATION] NL refine failed")
+        raise HTTPException(status_code=500, detail=f"NL refinement failed: {e}")
+
+
+# ── Vision Enrichment (Phase 1G) ─────────────────────────────────────
+
+
+@router.post("/state/enrich")
+async def enrich_state(
+    serial: str = Query(..., description="ADB device serial"),
+) -> dict:
+    """STB_AUTOMATION — Add vision analysis to the current screen state.
+
+    Captures an HDMI frame and runs AI vision analysis to identify
+    screen type, focused element, navigation path, and visible text.
+    Complements ADB-based state reading for ambiguous screens.
+    """
+    _check_flag()
+    return await nl_runner.enrich_state_with_vision(serial)
