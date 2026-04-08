@@ -633,7 +633,7 @@ export default function StbAutomationPanel() {
                       <div className="rounded border border-purple-200 bg-purple-50 p-2 dark:border-purple-800 dark:bg-purple-900/20">
                         <span className="text-purple-600 dark:text-purple-400">Focused: </span>
                         <span className="font-medium text-purple-900 dark:text-purple-100">
-                          {screenState.state.focused_element.text || screenState.state.focused_element.resource_id || screenState.state.focused_element.class_name}
+                          {screenState.state.focused_element.text || screenState.state.focused_element.resource_id || screenState.state.focused_element.content_desc || screenState.state.focused_element.class_name || screenState.state.focused_element.package || screenState.state.focused_element.bounds || '(unnamed element)'}
                         </span>
                       </div>
                     )}

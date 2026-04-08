@@ -20,6 +20,8 @@ class UIElement(BaseModel):
     resource_id: str = ""
     text: str = ""
     class_name: str = ""
+    package: str = ""
+    content_desc: str = ""
     bounds: str = ""
     focused: bool = False
     clickable: bool = False

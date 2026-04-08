@@ -608,6 +608,8 @@ export interface StbUIElement {
   resource_id: string;
   text: string;
   class_name: string;
+  package: string;
+  content_desc: string;
   bounds: string;
   focused: boolean;
   clickable: boolean;

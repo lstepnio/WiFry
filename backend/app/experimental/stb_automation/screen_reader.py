@@ -119,6 +119,8 @@ def _parse_ui_xml(xml_text: str) -> List[UIElement]:
                 resource_id=node.get("resource-id", ""),
                 text=node.get("text", ""),
                 class_name=node.get("class", ""),
+                package=node.get("package", ""),
+                content_desc=node.get("content-desc", ""),
                 bounds=node.get("bounds", ""),
                 focused=node.get("focused", "false") == "true",
                 clickable=node.get("clickable", "false") == "true",
@@ -129,11 +131,32 @@ def _parse_ui_xml(xml_text: str) -> List[UIElement]:
 
 
 def _find_focused(elements: List[UIElement]) -> Optional[UIElement]:
-    """Return the first focused element, or None."""
-    for el in elements:
-        if el.focused:
-            return el
-    return None
+    """Return the focused or selected element with the best label.
+
+    STBs vary: some use ``focused=true``, others use ``selected=true``,
+    and NAF (Not Accessibility Friendly) nodes may have empty text/class.
+    When multiple candidates exist, prefer the one with a meaningful label.
+    """
+    candidates = [el for el in elements if el.focused or el.selected]
+    if not candidates:
+        return None
+
+    def _label_score(el: UIElement) -> int:
+        """Higher = more informative label."""
+        score = 0
+        if el.text:
+            score += 4
+        if el.resource_id:
+            score += 3
+        if el.content_desc:
+            score += 2
+        if el.class_name:
+            score += 1
+        return score
+
+    # Prefer focused over selected, then best label
+    candidates.sort(key=lambda el: (el.focused, _label_score(el)), reverse=True)
+    return candidates[0]
 
 
 # ── Combined screen state ───────────────────────────────────────────
