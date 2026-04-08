@@ -65,7 +65,7 @@ async def _tshark_query(pcap_path: str, *args: str, timeout: float = _QUERY_TIME
         "tshark", "-r", pcap_path,
         *args,
     ]
-    return await run(*cmd_args, sudo=True, check=False, timeout=timeout)
+    return await run(*cmd_args, check=False, timeout=timeout)
 
 
 async def _prewarm_cache(pcap_path: str) -> None:
@@ -73,7 +73,7 @@ async def _prewarm_cache(pcap_path: str) -> None:
     if settings.mock_mode:
         return
     try:
-        await run("cat", pcap_path, sudo=True, check=False, timeout=30)
+        await run("cat", pcap_path, check=False, timeout=30)
     except Exception:
         pass  # Non-critical
 

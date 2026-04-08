@@ -386,6 +386,17 @@ async def _deploy_system_configs(steps: list) -> None:
             logger.warning("Failed to deploy %s: %s", dst, result.stderr)
             steps.append(f"deploy {Path(dst).name}: FAILED")
 
+    # Ensure dumpcap has capture capabilities (runs as wifry, not root)
+    result = await run(
+        "setcap", "cap_net_raw,cap_net_admin=eip", "/usr/bin/dumpcap",
+        sudo=True, check=False,
+    )
+    if result.success:
+        steps.append("dumpcap capabilities: ok")
+    else:
+        logger.warning("Failed to set dumpcap capabilities: %s", result.stderr)
+        steps.append("dumpcap capabilities: FAILED")
+
 
 # --- Rollback ---
 

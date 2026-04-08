@@ -206,7 +206,7 @@ async def start_capture(req: StartCaptureRequest) -> CaptureInfo:
 
     # Create segments directory for ring buffer
     seg_dir = _segments_dir(capture_id)
-    seg_dir.mkdir(parents=True, exist_ok=True)
+    seg_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
     segment_base = seg_dir / f"{capture_id}.pcapng"
 
     # Build dumpcap command with ring buffer
@@ -231,8 +231,12 @@ async def start_capture(req: StartCaptureRequest) -> CaptureInfo:
 
     logger.info("Starting capture %s: %s", capture_id, " ".join(cmd))
 
+    # dumpcap runs WITHOUT sudo — it uses Linux capabilities (cap_net_raw,cap_net_admin)
+    # set via setcap during install. This avoids privilege-dropping issues where
+    # sudo dumpcap would drop back to root for file I/O, breaking writes to
+    # wifry-owned directories.
     proc = await asyncio.create_subprocess_exec(
-        "sudo", *cmd,
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -314,10 +318,7 @@ async def _monitor_capture(capture_id: str, proc: asyncio.subprocess.Process) ->
         if not info:
             return
 
-        # Fix ownership on segment files
-        if seg_dir.exists():
-            await run("chown", "-R", "wifry:wifry", str(seg_dir), sudo=True, check=False)
-            await run("chmod", "-R", "644", str(seg_dir), sudo=True, check=False)
+        # Segments are already wifry-owned (dumpcap runs as wifry via capabilities)
 
         # Merge ring buffer segments into single pcap
         merged_pcap = _pcap_path(capture_id)
@@ -389,17 +390,14 @@ async def _merge_segments(capture_id: str, seg_dir: Path, output_path: Path) -> 
         except OSError:
             return False
 
-    # Multiple segments — use mergecap
+    # Multiple segments — use mergecap (no sudo needed, files are wifry-owned)
     seg_paths = [str(s) for s in segments]
     result = await run(
         "mergecap", "-w", str(output_path), *seg_paths,
-        sudo=True, check=False, timeout=120,
+        check=False, timeout=120,
     )
 
     if result.success:
-        # Fix ownership
-        await run("chown", "wifry:wifry", str(output_path), sudo=True, check=False)
-        await run("chmod", "644", str(output_path), sudo=True, check=False)
         logger.info("Merged %d segments for capture %s", len(segments), capture_id)
         return True
     else:
@@ -411,7 +409,7 @@ async def _count_packets(pcap_path: str) -> int:
     """Count packets in a pcap file using capinfos (faster than tshark)."""
     result = await run(
         "capinfos", "-c", "-M", pcap_path,
-        sudo=True, check=False, timeout=30,
+        check=False, timeout=30,
     )
     if result.success and result.stdout:
         # Parse "Number of packets: 1234" or "Number of packets = 1234"
@@ -425,7 +423,7 @@ async def _count_packets(pcap_path: str) -> int:
     # Fallback: count with tshark
     result = await run(
         "tshark", "-r", pcap_path, "-T", "fields", "-e", "frame.number",
-        sudo=True, check=False, timeout=30,
+        check=False, timeout=30,
     )
     if result.success and result.stdout:
         return len(result.stdout.strip().splitlines())

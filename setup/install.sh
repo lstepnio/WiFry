@@ -110,7 +110,7 @@ apt-get install -y -qq \
     python3 python3-venv python3-pip \
     hostapd dnsmasq bridge-utils \
     iproute2 iptables iptables-persistent \
-    tshark wireless-tools iw \
+    tshark libcap2-bin wireless-tools iw \
     nodejs npm git \
     ffmpeg v4l-utils \
     hping3 iperf3 \
@@ -120,6 +120,10 @@ apt-get install -y -qq \
     unattended-upgrades apt-listchanges rpi-eeprom
 
 info "System packages installed."
+
+# Grant dumpcap raw capture capability (avoids running as root)
+setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap 2>/dev/null || true
+info "dumpcap capabilities set."
 
 step "Upgrading system packages"
 
@@ -441,6 +445,8 @@ check "WiFi AP IP set" "ip addr show $WLAN_IFACE | grep -q '192.168.4.1'"
 check "IP forwarding enabled" "sysctl net.ipv4.ip_forward | grep -q '= 1'"
 check "NAT rules set" "iptables -t nat -S | grep -q MASQUERADE"
 check "tshark available" "command -v tshark"
+check "dumpcap available" "command -v dumpcap"
+check "dumpcap has capabilities" "/sbin/getcap /usr/bin/dumpcap | grep -q cap_net_raw"
 check "ffmpeg available" "command -v ffmpeg"
 check "CoreDNS available" "command -v coredns"
 check "Recovery console enabled" "systemctl is-enabled wifry-recovery"

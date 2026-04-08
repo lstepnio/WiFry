@@ -133,8 +133,8 @@ for dir in captures reports sessions segments bundles annotations \
            adb-files hdmi-captures coredns teleport network-profiles; do
     mkdir -p "$DATA_DIR/$dir"
 done
-# tshark/dumpcap drops privileges and needs world-writable captures dir
-chmod 1777 "$DATA_DIR/captures"
+# Captures dir writable by wifry user
+chmod 755 "$DATA_DIR/captures"
 mkdir -p "$MOUNT_DIR/var/log/wifry"
 
 # Write version
@@ -314,7 +314,7 @@ apt-get update -qq
 apt --fix-broken install -y 2>/dev/null || true
 apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
     python3-venv hostapd dnsmasq bridge-utils iptables git \
-    tshark wireless-tools iw ffmpeg v4l-utils \
+    tshark libcap2-bin wireless-tools iw ffmpeg v4l-utils \
     hping3 iperf3 wireguard-tools openvpn curl jq \
     unattended-upgrades apt-listchanges rpi-eeprom
 
@@ -383,10 +383,10 @@ fi
 
 # Fix ownership
 chown -R wifry:wifry /opt/wifry /var/lib/wifry /var/log/wifry
-# tshark/dumpcap drops privileges — captures dir must be world-writable
-chmod 1777 /var/lib/wifry/captures
-# Add wifry to wireshark group for dumpcap access
-usermod -aG wireshark wifry 2>/dev/null || true
+# Captures dir writable by wifry
+chmod 755 /var/lib/wifry/captures
+# Grant dumpcap raw capture capability (runs as wifry, not root)
+setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap 2>/dev/null || true
 
 # Python venv + pip install (native ARM, SSL works)
 echo "Setting up Python environment..."
