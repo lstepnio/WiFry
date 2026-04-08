@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ModalDialog from './ModalDialog';
 import PanelState from './PanelState';
 import { useNotification } from '../hooks/useNotification';
+import * as api from '../api/client';
+
+interface AiModel {
+  id: string;
+  name: string;
+  tier: string;
+}
 
 interface Settings {
   anthropic_api_key: string;
@@ -9,6 +16,7 @@ interface Settings {
   openai_api_key: string;
   openai_api_key_set: boolean;
   ai_provider: string;
+  ai_model: string;
   git_repo_url: string;
   web_password_set: boolean;
   ap_ssid: string;
@@ -93,6 +101,9 @@ export default function SettingsPanel() {
   const [anthropicKey, setAnthropicKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [aiProvider, setAiProvider] = useState('anthropic');
+  const [aiModel, setAiModel] = useState('');
+  const [availableModels, setAvailableModels] = useState<AiModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [gitRepo, setGitRepo] = useState('');
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
@@ -104,6 +115,18 @@ export default function SettingsPanel() {
   const [pendingDelete, setPendingDelete] = useState<DeleteActionKey | null>(null);
   const [factoryResetStage, setFactoryResetStage] = useState<'warning' | 'final' | null>(null);
 
+  const fetchModels = useCallback(async (provider: string) => {
+    setModelsLoading(true);
+    try {
+      const data = await api.getAiModels(provider);
+      setAvailableModels(data.models);
+    } catch {
+      setAvailableModels([]);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoadingSettings(true);
     setSettingsError(null);
@@ -114,20 +137,22 @@ export default function SettingsPanel() {
       const data = await res.json();
       setSettings(data);
       setAiProvider(data.ai_provider);
+      setAiModel(data.ai_model || '');
       setGitRepo(data.git_repo_url || '');
+      fetchModels(data.ai_provider);
     } catch {
       setSettingsError('Unable to load settings right now. Try refreshing the page.');
     } finally {
       setLoadingSettings(false);
     }
-  }, []);
+  }, [fetchModels]);
 
   useEffect(() => { load(); }, [load]);
 
   const saveSettings = async () => {
     setSaving(true);
     try {
-      const updates: Record<string, unknown> = { ai_provider: aiProvider };
+      const updates: Record<string, unknown> = { ai_provider: aiProvider, ai_model: aiModel };
       if (anthropicKey && !anthropicKey.startsWith('****')) updates.anthropic_api_key = anthropicKey;
       if (openaiKey && !openaiKey.startsWith('****')) updates.openai_api_key = openaiKey;
       if (gitRepo) updates.git_repo_url = gitRepo;
@@ -275,11 +300,36 @@ export default function SettingsPanel() {
             <div className="space-y-2">
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Provider</label>
-                <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)}
+                <select value={aiProvider} onChange={(e) => { setAiProvider(e.target.value); setAiModel(''); fetchModels(e.target.value); }}
                   className="w-48 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white">
                   <option value="anthropic">Anthropic (Claude)</option>
                   <option value="openai">OpenAI (GPT)</option>
                 </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Model</label>
+                <div className="flex items-center gap-2">
+                  <select value={aiModel} onChange={(e) => setAiModel(e.target.value)}
+                    disabled={modelsLoading}
+                    className="w-64 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white disabled:opacity-50">
+                    <option value="">Provider default</option>
+                    {availableModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}{m.tier ? ` (${m.tier})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {modelsLoading && <span className="text-xs text-gray-500">Loading...</span>}
+                  <button type="button" onClick={() => fetchModels(aiProvider)}
+                    disabled={modelsLoading}
+                    className="rounded border border-gray-600 px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-800 disabled:opacity-50"
+                    title="Refresh model list">
+                    ↻
+                  </button>
+                </div>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  {aiProvider === 'openai' ? 'Default: gpt-5.4-mini' : 'Default: claude-sonnet-4'}
+                </p>
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-500">
