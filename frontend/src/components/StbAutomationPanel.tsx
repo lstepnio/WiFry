@@ -899,6 +899,33 @@ export default function StbAutomationPanel() {
                         </span>
                       )}
                     </div>
+                    {/* UI Map diagnostics */}
+                    {screenState.diag?.ui_map && (() => {
+                      const m = screenState.diag!.ui_map!;
+                      const confColor = m.prediction_confidence >= 0.8 ? 'text-green-600 dark:text-green-400' :
+                        m.prediction_confidence >= 0.5 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400';
+                      return (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                          <span className="font-medium text-purple-600 dark:text-purple-400">MAP</span>
+                          {m.observation_recorded ? (
+                            <span className={`${badge} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`}>observed</span>
+                          ) : m.observation_skipped_reason ? (
+                            <span className={`${badge} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`}>skip: {m.observation_skipped_reason}</span>
+                          ) : null}
+                          {m.from_focused && (
+                            <span className="text-gray-400 dark:text-gray-500">
+                              {m.last_action}: {m.from_focused} → {m.to_focused || '?'}
+                            </span>
+                          )}
+                          {m.prediction_available && (
+                            <span className={`${badge} bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300`}>
+                              predicted ({m.prediction_observations}x, <span className={confColor}>{Math.round(m.prediction_confidence * 100)}%</span>)
+                            </span>
+                          )}
+                          <span className="text-gray-400 dark:text-gray-500">{m.map_entries_for_screen} entries</span>
+                        </div>
+                      );
+                    })()}
                     {/* State read timing waterfall */}
                     {screenState.diag && (screenState.diag.adb_total_ms ?? 0) > 0 && (() => {
                       const d = screenState.diag!;

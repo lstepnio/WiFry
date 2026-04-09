@@ -279,12 +279,27 @@ async def stb_status() -> StbStatus:
 # ── Screen State ────────────────────────────────────────────────────
 
 
+class UIMapDiag(BaseModel):
+    """UI map diagnostics for the current state."""
+    screen_key: str = ""
+    last_action: str = ""
+    from_focused: str = ""
+    to_focused: str = ""  # what the map predicted or observed
+    observation_recorded: bool = False
+    observation_skipped_reason: str = ""  # why observation was skipped
+    prediction_available: bool = False
+    prediction_confidence: float = 0.0
+    prediction_observations: int = 0
+    map_entries_for_screen: int = 0  # total entries for this screen
+
+
 class ScreenStateDiag(BaseModel):
     """Diagnostics attached to every /state response."""
     fingerprint: str = ""  # stable nav-graph identity
     visual_hash: str = ""  # volatile hash (changes with focus/text)
     fingerprint_inputs: str = ""  # what went into the fingerprint
     vision: Optional[VisionDiag] = None  # vision cache diagnostics
+    ui_map: Optional[UIMapDiag] = None  # UI map diagnostics
     adb_signals: int = 0  # number of non-empty ADB signal fields
     read_ms: int = 0  # total time to read state (kept for backward compat)
     # Per-stage timing breakdown
@@ -372,10 +387,16 @@ async def get_state(
 
             # Record observation in UI map — cache hits are as trustworthy
             # as fresh AI calls (same pixels = same result by definition)
+            map_diag = UIMapDiag()
             if vision.focused_label:
                 screen_key = f"{state.package}/{state.activity}"
                 _map_action = ui_map.get_last_action()
                 _map_from_focused = ui_map.get_last_focused(screen_key)
+                map_diag.screen_key = screen_key
+                map_diag.last_action = _map_action
+                map_diag.from_focused = _map_from_focused
+                map_diag.to_focused = vision.focused_label
+                map_diag.map_entries_for_screen = len(ui_map.get_screen_entries(screen_key))
                 if _map_action and _map_from_focused:
                     ui_map.observe(
                         screen_key=screen_key,
@@ -388,12 +409,17 @@ async def get_state(
                         to_focused_confidence=vision.focused_confidence,
                         to_navigation_path=vision.navigation_path,
                     )
+                    map_diag.observation_recorded = True
+                else:
+                    map_diag.observation_skipped_reason = (
+                        "no_action" if not _map_action else "no_from_focused"
+                    )
                 ui_map.set_last_focused(screen_key, vision.focused_label)
 
             stable_fp = fp.fingerprint(state)
-            # No visual_hash on fast path (no ui_elements to hash)
             diag = _build_diag(state, stable_fp, "", timings)
             diag.vision = vision_diag
+            diag.ui_map = map_diag
             diag.frame_hash_ms = frame_hash_ms
             diag.vision_fast_path = True
             diag.total_ms = int((time.time() - t0) * 1000)
@@ -439,9 +465,22 @@ async def get_state(
         diag = _build_diag(state, stable_fp, "", timings)
         diag.frame_hash_ms = frame_hash_ms
         diag.vision = vision_diag
+
+        map_diag = UIMapDiag(
+            screen_key=_map_screen_key,
+            last_action=_map_action,
+            from_focused=_map_from_focused,
+            map_entries_for_screen=len(ui_map.get_screen_entries(_map_screen_key)),
+        )
+        if map_prediction:
+            map_diag.prediction_available = True
+            map_diag.prediction_confidence = map_prediction.confidence
+            map_diag.prediction_observations = map_prediction.observation_count
+
         if vision:
             state.vision = vision
             _enrich_focused_context(state, vision)
+            map_diag.to_focused = vision.focused_label
 
             # Record observation in UI map
             if _map_from_focused and _map_action and vision.focused_label:
@@ -456,6 +495,14 @@ async def get_state(
                     to_focused_confidence=vision.focused_confidence,
                     to_navigation_path=vision.navigation_path,
                 )
+                map_diag.observation_recorded = True
+            else:
+                map_diag.observation_skipped_reason = (
+                    "no_action" if not _map_action
+                    else "no_from_focused" if not _map_from_focused
+                    else "no_focused_label" if not vision.focused_label
+                    else ""
+                )
 
             # Validate prediction if we had one
             if map_prediction and vision.focused_label:
@@ -469,6 +516,7 @@ async def get_state(
             # Update last focused for next prediction
             ui_map.set_last_focused(_map_screen_key, vision.focused_label)
 
+        diag.ui_map = map_diag
         diag.total_ms = int((time.time() - t0) * 1000)
         diag.read_ms = diag.total_ms
         return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)

@@ -693,11 +693,25 @@ export interface StbVisionCacheDebug {
   entries: StbVisionCacheEntry[];
 }
 
+export interface UIMapDiag {
+  screen_key: string;
+  last_action: string;
+  from_focused: string;
+  to_focused: string;
+  observation_recorded: boolean;
+  observation_skipped_reason: string;
+  prediction_available: boolean;
+  prediction_confidence: number;
+  prediction_observations: number;
+  map_entries_for_screen: number;
+}
+
 export interface StbScreenStateDiag {
   fingerprint: string;
   visual_hash: string;
   fingerprint_inputs: string;
   vision: StbVisionDiag | null;
+  ui_map: UIMapDiag | null;
   adb_signals: number;
   read_ms: number;
   // Per-stage timing breakdown
