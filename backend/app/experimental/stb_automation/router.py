@@ -412,15 +412,16 @@ async def get_state(
             return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
 
         # ── CACHE MISS: ADB + AI API call IN PARALLEL ─────────────
-        # The AI vision call and ADB reads are independent — overlap them
-        # to shave 200-400ms off the cold path.
+        # The AI vision call and ADB reads are independent — overlap them.
+        # Skip hierarchy on the vision path — vision provides better
+        # focus/element data than uiautomator on most STBs.
         monitor = get_monitor()
         recent = monitor.get_events(last_n=5) if monitor.is_active else []
 
         adb_task = screen_reader.read_screen_state(
             serial=serial,
             recent_events=recent,
-            include_hierarchy=include_hierarchy,
+            include_hierarchy=False,
         )
         vision_task = _run_vision_analysis(
             frame=frame,
@@ -432,9 +433,8 @@ async def get_state(
             adb_task, vision_task,
         )
 
-        stable_fp = fp.fingerprint(state)
-        volatile_vh = fp.visual_hash(state)
-        diag = _build_diag(state, stable_fp, volatile_vh, timings)
+        stable_fp = fp.fingerprint_from_activity(state.package, state.activity)
+        diag = _build_diag(state, stable_fp, "", timings)
         diag.frame_hash_ms = frame_hash_ms
         diag.vision = vision_diag
         if vision:

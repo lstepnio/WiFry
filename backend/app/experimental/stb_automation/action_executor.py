@@ -7,12 +7,13 @@ waits for the screen to settle using a tiered strategy:
      FOCUS_CHANGED from the logcat monitor.  Fastest signal (~50-200ms).
   2. **dumpsys poll** (1000-2000ms) — fall back to polling
      ``dumpsys window windows`` for activity changes.
-  3. **uiautomator hash** (2000-3000ms) — compare structural fingerprint
-     before/after to detect in-activity UI changes.
+  3. **Activity fingerprint** (2000-3000ms) — compare activity-based
+     fingerprint before/after to detect transitions.
   4. **Timeout** (3000ms) — record "no transition".
 
-After settle, reads the full screen state and returns both before/after
-snapshots with timing metadata.
+Hierarchy (uiautomator dump) is intentionally skipped during navigate
+to avoid the ~3000ms penalty.  The background ``GET /state?vision=true``
+call provides rich focus/element data via AI vision instead.
 """
 
 import asyncio
@@ -28,6 +29,22 @@ from .logcat_monitor import LogcatMonitor, get_monitor
 from .models import LogcatEvent, ScreenState
 
 logger = logging.getLogger("wifry.stb_automation.action_executor")
+
+
+def _signals_dict(state: ScreenState) -> dict:
+    """Extract ADB signal values for diagnostics."""
+    return {
+        "package": state.package,
+        "activity": state.activity,
+        "window_title": state.window_title,
+        "fragments": state.fragments,
+        "focused_element": (
+            f"{state.focused_element.resource_id or state.focused_element.text or state.focused_element.class_name}"
+            if state.focused_element else None
+        ),
+        "focused_context": state.focused_context,
+        "ui_elements_count": len(state.ui_elements),
+    }
 
 
 @dataclass
@@ -99,17 +116,9 @@ async def navigate(
 ) -> NavigateResult:
     """Send a key press and wait for the screen to settle.
 
-    Parameters
-    ----------
-    serial:
-        ADB device serial.
-    action:
-        Key name (e.g. ``"down"``, ``"enter"``, ``"back"``).
-    settle_timeout_ms:
-        Maximum time to wait for settle detection.
-    monitor:
-        Optional logcat monitor instance.  If None, uses the
-        module-level singleton.
+    Hierarchy (uiautomator dump) is skipped to avoid the ~3000ms
+    penalty — the background GET /state?vision=true call provides
+    rich focus/element data via AI vision instead.
     """
     if monitor is None:
         monitor = get_monitor()
@@ -129,7 +138,7 @@ async def navigate(
     await adb_manager.send_key(serial, action)
     key_press_ms = round((time.monotonic() - t0) * 1000, 1)
 
-    # 3. Settle detection — tiered strategy
+    # 3. Settle detection — tiered strategy (no hierarchy)
     settle_method, post_state, settle_timing = await _settle(
         serial=serial,
         pre_package=pre_state.package,
@@ -139,9 +148,9 @@ async def navigate(
         timeout_ms=settle_timeout_ms,
     )
 
-    # 4. Post-fingerprint
+    # 4. Post-fingerprint (activity-based, no hierarchy needed)
     t0 = time.monotonic()
-    post_fp = fp.fingerprint(post_state)
+    post_fp = fp.fingerprint_from_activity(post_state.package, post_state.activity)
     post_fingerprint_ms = round((time.monotonic() - t0) * 1000, 1)
 
     settle_ms = (time.monotonic() - t_start) * 1000
@@ -155,6 +164,7 @@ async def navigate(
         "settle_read_detail": settle_timing.read_detail,
         "post_fingerprint_ms": post_fingerprint_ms,
         "total_ms": round(settle_ms, 1),
+        "signals": _signals_dict(post_state),
     }
 
     logger.info(
@@ -198,7 +208,7 @@ async def _settle(
     monitor: LogcatMonitor,
     timeout_ms: int,
 ) -> tuple[str, ScreenState, _SettleTiming]:
-    """Tiered settle detection.  Returns (method, post_state, timing)."""
+    """Tiered settle detection (no hierarchy).  Returns (method, post_state, timing)."""
 
     st = _SettleTiming()
 
@@ -210,49 +220,52 @@ async def _settle(
             timeout_ms=min(1000, timeout_ms),
         )
         if event is not None:
-            # Event detected — wait a short animation settle
-            await asyncio.sleep(0.15)
+            # Event detected — short animation settle
+            await asyncio.sleep(0.08)
             st.wait_ms = (time.monotonic() - t_wait) * 1000
             recent = monitor.get_events(last_n=5)
             t_read = time.monotonic()
             state, timings = await screen_reader.read_screen_state(
-                serial, recent_events=recent,
+                serial, recent_events=recent, include_hierarchy=False,
             )
             st.read_ms = (time.monotonic() - t_read) * 1000
             st.read_detail = _read_timings_dict(timings)
             return "logcat", state, st
         st.wait_ms = (time.monotonic() - t_wait) * 1000
+        # Logcat monitor is active but no event — skip dumpsys poll
+        # (if logcat didn't see a transition, dumpsys won't either)
 
-    # Tier 2: dumpsys poll (up to 2000ms total)
-    tier2_deadline = min(2000, timeout_ms) / 1000.0
-    tier2_start = time.monotonic()
-    while (time.monotonic() - tier2_start) < tier2_deadline:
-        pkg, act = await screen_reader.read_foreground_activity(serial)
-        if pkg != pre_package or act != pre_activity:
-            await asyncio.sleep(0.15)
-            st.wait_ms += (time.monotonic() - tier2_start) * 1000
-            recent = monitor.get_events(last_n=5) if monitor.is_active else []
-            t_read = time.monotonic()
-            state, timings = await screen_reader.read_screen_state(
-                serial, recent_events=recent,
-            )
-            st.read_ms = (time.monotonic() - t_read) * 1000
-            st.read_detail = _read_timings_dict(timings)
-            return "dumpsys", state, st
-        await asyncio.sleep(0.1)
-    st.wait_ms += (time.monotonic() - tier2_start) * 1000
+    else:
+        # Tier 2: dumpsys poll — only when logcat monitor is NOT active
+        tier2_deadline = min(2000, timeout_ms) / 1000.0
+        tier2_start = time.monotonic()
+        while (time.monotonic() - tier2_start) < tier2_deadline:
+            pkg, act = await screen_reader.read_foreground_activity(serial)
+            if pkg != pre_package or act != pre_activity:
+                await asyncio.sleep(0.08)
+                st.wait_ms += (time.monotonic() - tier2_start) * 1000
+                recent = []
+                t_read = time.monotonic()
+                state, timings = await screen_reader.read_screen_state(
+                    serial, recent_events=recent, include_hierarchy=False,
+                )
+                st.read_ms = (time.monotonic() - t_read) * 1000
+                st.read_detail = _read_timings_dict(timings)
+                return "dumpsys", state, st
+            await asyncio.sleep(0.05)
+        st.wait_ms += (time.monotonic() - tier2_start) * 1000
 
-    # Tier 3: uiautomator structural hash (up to 3000ms total)
+    # Tier 3: Activity fingerprint comparison (no hierarchy)
     recent = monitor.get_events(last_n=5) if monitor.is_active else []
     t_read = time.monotonic()
     state, timings = await screen_reader.read_screen_state(
-        serial, recent_events=recent,
+        serial, recent_events=recent, include_hierarchy=False,
     )
     st.read_ms = (time.monotonic() - t_read) * 1000
     st.read_detail = _read_timings_dict(timings)
-    post_fp = fp.fingerprint(state)
+    post_fp = fp.fingerprint_from_activity(state.package, state.activity)
     if post_fp != pre_fp:
-        return "uiautomator", state, st
+        return "activity", state, st
 
     # Tier 4: Timeout — no transition detected
     return "timeout", state, st
@@ -289,5 +302,6 @@ async def navigate_mock(action: str) -> NavigateResult:
             "settle_read_detail": {},
             "post_fingerprint_ms": 0,
             "total_ms": 150.0,
+            "signals": _signals_dict(post),
         },
     )
