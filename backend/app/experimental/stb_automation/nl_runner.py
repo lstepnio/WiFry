@@ -17,7 +17,7 @@ from typing import Optional
 from uuid import uuid4
 
 from ...config import settings
-from . import nav_model, test_flows
+from . import nav_model, test_flows, ui_map
 from .models import NavigationModel, TestFlow, TestStep
 
 logger = logging.getLogger("wifry.stb_automation.nl_runner")
@@ -35,8 +35,16 @@ power, 0-9 (number keys).
 
 Special pseudo-actions:
 - "wait" — pause for a duration (set wait_ms)
-- "assert" — verify the screen matches expectations (set expected_activity
-  or expected_screen_id)
+- "assert" — verify the screen matches expectations
+
+Assertion fields (use on any step, not just "assert"):
+- expected_activity: Android activity name to match
+- expected_screen_type: Vision screen type ("home", "settings", "player", etc.)
+- expected_focused_label: Vision focused element label (e.g., "Device Preferences")
+
+PREFER vision-based assertions (expected_screen_type, expected_focused_label)
+over activity-based ones. Vision assertions work on all STBs including NAF
+(non-accessible framework) devices.
 
 You MUST respond with valid JSON matching this schema:
 {
@@ -46,9 +54,11 @@ You MUST respond with valid JSON matching this schema:
     {
       "action": "<keycode or wait or assert>",
       "description": "<human-readable step description>",
-      "expected_activity": "<optional: expected Android activity after action>",
+      "expected_activity": "<optional: Android activity after action>",
+      "expected_screen_type": "<optional: vision screen type>",
+      "expected_focused_label": "<optional: focused element label>",
       "wait_ms": <optional: milliseconds to wait, default 0>,
-      "collect_diagnostics": <optional: true to snapshot diagnostics at this step>
+      "collect_diagnostics": <optional: true to snapshot diagnostics>
     }
   ]
 }
@@ -217,6 +227,11 @@ def _build_user_prompt(prompt: str, device_id: Optional[str] = None) -> str:
         if model and model.nodes:
             parts.append(_format_nav_model_context(model))
 
+    # Include UI map data — learned menu patterns with actual item names
+    map_context = _format_ui_map_context()
+    if map_context:
+        parts.append(map_context)
+
     return "\n\n".join(parts)
 
 
@@ -264,6 +279,51 @@ def _format_nav_model_context(model: NavigationModel) -> str:
         home_label = home.activity if home else model.home_node_id
         parts.append(f"\nHome screen: {home_label}")
 
+    return "\n".join(parts)
+
+
+def _format_ui_map_context() -> str:
+    """Format the learned UI map as context for the AI.
+
+    Provides the AI with actual menu item names and D-pad transitions
+    so it can generate realistic navigation sequences.
+    """
+    screens = ui_map.get_all_screens()
+    if not screens:
+        return ""
+
+    parts = ["Learned menu navigation patterns (from UI map):"]
+
+    for screen_summary in screens[:10]:  # Cap at 10 screens
+        screen_key = screen_summary["screen_key"]
+        entries = ui_map.get_screen_entries(screen_key)
+        if not entries:
+            continue
+
+        parts.append(f"\n  Screen: {screen_key}")
+
+        # Group by from_focused to show menu structure
+        from_items: dict[str, list] = {}
+        for e in entries:
+            if e.from_focused not in from_items:
+                from_items[e.from_focused] = []
+            from_items[e.from_focused].append(e)
+
+        for from_label, transitions in list(from_items.items())[:15]:
+            moves = []
+            for t in transitions:
+                if t.confidence >= 0.5:
+                    moves.append(f"{t.action}→{t.to_focused}")
+            if moves:
+                parts.append(f"    [{from_label}]: {', '.join(moves)}")
+
+    if len(parts) <= 1:
+        return ""
+
+    parts.append(
+        "\nUse these known menu patterns to generate accurate key sequences. "
+        "The patterns show which D-pad action moves focus between menu items."
+    )
     return "\n".join(parts)
 
 
