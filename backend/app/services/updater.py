@@ -11,7 +11,7 @@ Update flow:
   5. Install any new system (apt) packages
   6. pip install + npm build
   7. Write new VERSION file
-  7. Auto-restart backend (deferred 3s)
+  8. Auto-restart backend (deferred 3s)
 
 Rollback: on failure, restore previous version tag + VERSION file.
 """
@@ -263,6 +263,11 @@ async def apply_update(target_version: str = "") -> dict:
                 "steps": steps}
     steps.append("git fetch: ok")
 
+    # Fix ownership before checkout so wifry user can replace files
+    # (deploy-ssh rsync may leave files owned by a different UID)
+    await run("chown", "-R", "wifry:wifry", INSTALL_DIR, sudo=True, check=False)
+    steps.append("chown (pre-checkout): ok")
+
     # Checkout target tag
     result = await run("git", "-C", INSTALL_DIR, "checkout", target_version, "--force",
                        check=False, timeout=30)
@@ -277,9 +282,8 @@ async def apply_update(target_version: str = "") -> dict:
                 "steps": steps}
     steps.append(f"git checkout {target_version}: ok")
 
-    # Fix ownership after checkout (git may change file owners)
+    # Fix ownership again for any new files created by checkout
     await run("chown", "-R", "wifry:wifry", INSTALL_DIR, sudo=True, check=False)
-    steps.append("chown: ok")
 
     # Deploy system config files that live outside /opt/wifry
     await _deploy_system_configs(steps)

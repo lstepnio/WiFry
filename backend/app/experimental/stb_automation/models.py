@@ -186,6 +186,9 @@ class TestStep(BaseModel):
     action: str  # keycode or "wait" or "assert"
     expected_screen_id: Optional[str] = None
     expected_activity: Optional[str] = None
+    # Vision-based assertions (work on NAF STBs where ADB assertions fail)
+    expected_screen_type: Optional[str] = None  # "home", "settings", "player", etc.
+    expected_focused_label: Optional[str] = None  # "What to Watch", "Settings", etc.
     wait_ms: int = 0
     description: str = ""
     collect_diagnostics: bool = False
