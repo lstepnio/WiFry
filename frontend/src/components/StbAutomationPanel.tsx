@@ -191,6 +191,7 @@ export default function StbAutomationPanel() {
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionThreshold, setVisionThreshold] = useState(0);
   const [settleTimeoutMs, setSettleTimeoutMs] = useState(3000);
+  const visionAbortRef = useRef<AbortController | null>(null);
 
   // HDMI stream
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -290,6 +291,11 @@ export default function StbAutomationPanel() {
     if (!selectedSerial || navigating) return;
     setNavigating(true);
     setError(null);
+
+    // Cancel any in-flight vision call from a previous navigate
+    visionAbortRef.current?.abort();
+    visionAbortRef.current = null;
+
     try {
       const result = await api.stbNavigate(selectedSerial, action, settleTimeoutMs);
       setLastNav(result);
@@ -298,10 +304,20 @@ export default function StbAutomationPanel() {
         fingerprint: result.post_fingerprint,
         diag: null,
       });
-      // If vision is enabled, re-read state with vision analysis in background
-      // (navigate endpoint doesn't include vision to keep it fast)
+
+      // If vision is enabled, await the vision call before allowing next navigate.
+      // This gates rapid key presses so the cache sees the correct HDMI frame.
       if (visionEnabled) {
-        api.getStbState(selectedSerial, true, true, visionThreshold).then(s => setScreenState(s)).catch(() => {});
+        const controller = new AbortController();
+        visionAbortRef.current = controller;
+        try {
+          const s = await api.getStbState(selectedSerial, true, true, visionThreshold, controller.signal);
+          if (!controller.signal.aborted) {
+            setScreenState(s);
+          }
+        } catch {
+          // Aborted or network error — ignore, navigate result already set above
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Navigate failed');
