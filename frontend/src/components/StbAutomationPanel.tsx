@@ -70,7 +70,7 @@ const DEVICE_STATE_COLORS: Record<string, string> = {
   unauthorized: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
 };
 
-type PanelSection = 'remote' | 'crawl' | 'flows' | 'chaos' | 'nl';
+type PanelSection = 'remote' | 'crawl' | 'map' | 'flows' | 'chaos' | 'nl';
 
 function VisionCacheDump() {
   const [cache, setCache] = useState<import('../types').StbVisionCacheDebug | null>(null);
@@ -194,6 +194,12 @@ export default function StbAutomationPanel() {
   const [visionPrompt, setVisionPrompt] = useState('');
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const visionAbortRef = useRef<AbortController | null>(null);
+
+  // UI Map state
+  const [mapData, setMapData] = useState<import('../types').UIMapResponse | null>(null);
+  const [mapSelectedScreen, setMapSelectedScreen] = useState<string | null>(null);
+  const [mapScreenEntries, setMapScreenEntries] = useState<import('../types').UIMapEntry[]>([]);
+  const [mapLoading, setMapLoading] = useState(false);
 
   // HDMI stream
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -697,6 +703,7 @@ export default function StbAutomationPanel() {
             {([
               { id: 'remote' as const, label: 'Remote' },
               { id: 'crawl' as const, label: 'Crawl' },
+              { id: 'map' as const, label: 'Map' },
               { id: 'flows' as const, label: 'Test Flows' },
               { id: 'chaos' as const, label: 'Chaos' },
               { id: 'nl' as const, label: 'NL Test' },
@@ -1183,6 +1190,126 @@ export default function StbAutomationPanel() {
               )}
             </div>
           )}
+
+          {/* UI Map Section */}
+          {activeSection === 'map' && (() => {
+            const confColor = (c: number) =>
+              c >= 0.8 ? 'text-green-600 dark:text-green-400' :
+              c >= 0.5 ? 'text-amber-600 dark:text-amber-400' :
+              'text-red-600 dark:text-red-400';
+
+            const loadMap = async () => {
+              setMapLoading(true);
+              try { setMapData(await api.getUIMap()); } catch { /* ignore */ }
+              setMapLoading(false);
+            };
+
+            const loadScreen = async (screenKey: string) => {
+              setMapSelectedScreen(screenKey);
+              try {
+                const data = await api.getUIMapScreen(screenKey);
+                setMapScreenEntries(data.entries);
+              } catch { /* ignore */ }
+            };
+
+            // Auto-load if empty
+            if (!mapData && !mapLoading) { loadMap(); }
+
+            return (
+              <div className="space-y-4">
+                {/* Stats bar */}
+                <div className={card}>
+                  <div className="flex items-center justify-between">
+                    <h3 className={sectionTitle}>UI Map</h3>
+                    <div className="flex gap-2">
+                      <button onClick={loadMap} disabled={mapLoading} className={`${btnGhost} py-1 text-xs`}>
+                        {mapLoading ? 'Loading...' : 'Refresh'}
+                      </button>
+                      <button onClick={async () => { await api.clearUIMap(); setMapSelectedScreen(null); setMapScreenEntries([]); loadMap(); }} className={`${btnDanger} py-1 text-xs`}>
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  {mapData && (
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
+                      <span>Screens: <span className="font-medium text-gray-700 dark:text-gray-200">{mapData.stats.total_screens}</span></span>
+                      <span>Entries: <span className="font-medium text-gray-700 dark:text-gray-200">{mapData.stats.total_entries}</span></span>
+                      <span>Observations: <span className="font-medium text-gray-700 dark:text-gray-200">{mapData.stats.total_observations}</span></span>
+                      <span>Predictions: <span className="font-medium text-gray-700 dark:text-gray-200">{mapData.stats.total_predictions}</span></span>
+                      {mapData.stats.total_predictions > 0 && (
+                        <span>Accuracy: <span className={`font-medium ${confColor(mapData.stats.prediction_accuracy_pct / 100)}`}>{mapData.stats.prediction_accuracy_pct}%</span></span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Screen list */}
+                {mapData && mapData.screens.length > 0 && (
+                  <div className={card}>
+                    <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">Learned Screens</h4>
+                    <div className="space-y-1">
+                      {mapData.screens.map(s => (
+                        <button
+                          key={s.screen_key}
+                          onClick={() => loadScreen(s.screen_key)}
+                          className={`w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${mapSelectedScreen === s.screen_key ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-[10px] text-gray-600 dark:text-gray-400">{s.screen_key}</span>
+                            <div className="flex gap-2">
+                              <span className="text-[10px] text-gray-400">{s.entry_count} entries</span>
+                              <span className={`text-[10px] font-medium ${confColor(s.avg_confidence)}`}>{Math.round(s.avg_confidence * 100)}%</span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mapData && mapData.screens.length === 0 && (
+                  <div className={card}>
+                    <p className="text-center text-xs text-gray-500 dark:text-gray-400">
+                      No patterns learned yet. Navigate the STB with AI Vision enabled to build the map.
+                    </p>
+                  </div>
+                )}
+
+                {/* Screen detail — transitions table */}
+                {mapSelectedScreen && mapScreenEntries.length > 0 && (
+                  <div className={card}>
+                    <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                      Transitions: <span className="font-mono text-[10px]">{mapSelectedScreen}</span>
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="border-b border-gray-200 text-left text-[10px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                            <th className="pb-1 pr-2">Action</th>
+                            <th className="pb-1 pr-2">From</th>
+                            <th className="pb-1 pr-2">To</th>
+                            <th className="pb-1 pr-2 text-right">Obs</th>
+                            <th className="pb-1 text-right">Conf</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mapScreenEntries.map((e, i) => (
+                            <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
+                              <td className="py-1 pr-2 font-medium text-gray-700 dark:text-gray-300">{e.action}</td>
+                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.from_focused}</td>
+                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.to_focused}</td>
+                              <td className="py-1 pr-2 text-right tabular-nums text-gray-500">{e.observation_count}</td>
+                              <td className={`py-1 text-right tabular-nums font-medium ${confColor(e.confidence)}`}>{Math.round(e.confidence * 100)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Test Flows Section */}
           {activeSection === 'flows' && (

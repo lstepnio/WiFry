@@ -774,6 +774,44 @@ export interface StbNavigateResponse {
   timing?: StbNavigateTiming;
 }
 
+// UI Map (learned menu patterns)
+export interface UIMapEntry {
+  screen_key: string;
+  action: string;
+  from_focused: string;
+  to_focused: string;
+  to_screen_type: string;
+  to_screen_title: string;
+  to_focused_position: string;
+  to_focused_confidence: string;
+  to_navigation_path: string[];
+  observation_count: number;
+  confidence: number;
+  last_observed: string;
+}
+
+export interface UIMapScreenSummary {
+  screen_key: string;
+  entry_count: number;
+  avg_confidence: number;
+  max_observations: number;
+}
+
+export interface UIMapStats {
+  total_screens: number;
+  total_entries: number;
+  total_observations: number;
+  total_predictions: number;
+  total_prediction_hits: number;
+  total_prediction_misses: number;
+  prediction_accuracy_pct: number;
+}
+
+export interface UIMapResponse {
+  screens: UIMapScreenSummary[];
+  stats: UIMapStats;
+}
+
 export interface StbTransitionEdge {
   from_node: string;
   to_node: string;

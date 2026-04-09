@@ -403,6 +403,23 @@ export async function clearStbVisionCache(): Promise<{ cleared: number }> {
   return request('/experimental/stb/vision/cache', { method: 'DELETE' });
 }
 
+// UI Map
+export async function getUIMap(): Promise<import('../types').UIMapResponse> {
+  return request('/experimental/stb/ui-map');
+}
+
+export async function getUIMapScreen(screenKey: string): Promise<{ screen_key: string; entries: import('../types').UIMapEntry[] }> {
+  return request(`/experimental/stb/ui-map/screen?screen_key=${encodeURIComponent(screenKey)}`);
+}
+
+export async function getUIMapStats(): Promise<import('../types').UIMapStats> {
+  return request('/experimental/stb/ui-map/stats');
+}
+
+export async function clearUIMap(): Promise<{ cleared: number }> {
+  return request('/experimental/stb/ui-map', { method: 'DELETE' });
+}
+
 export async function getStbEvents(lastN: number = 20): Promise<import('../types').StbLogcatEvent[]> {
   return request(`/experimental/stb/events?last_n=${lastN}`);
 }
