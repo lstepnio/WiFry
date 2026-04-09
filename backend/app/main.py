@@ -57,16 +57,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Vision cache load failed (non-fatal): %s", e)
 
-    # Load persisted UI map (non-fatal)
+    # Load persisted vision map (non-fatal)
     try:
-        from .experimental.stb_automation import ui_map
-        count = ui_map.load()
+        from .experimental.stb_automation import vision_map
+        count = vision_map.load()
         if count:
-            logger.info("[STB_AUTOMATION] UI map loaded: %d entries", count)
+            logger.info("[STB_AUTOMATION] Vision map loaded: %d entries", count)
     except ImportError:
         pass
     except Exception as e:
-        logger.warning("UI map load failed (non-fatal): %s", e)
+        logger.warning("Vision map load failed (non-fatal): %s", e)
 
     yield
 
@@ -84,14 +84,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Vision cache save failed (non-fatal): %s", e)
     try:
-        from .experimental.stb_automation import ui_map
-        count = ui_map.save()
+        from .experimental.stb_automation import vision_map
+        count = vision_map.save()
         if count:
-            logger.info("[STB_AUTOMATION] UI map saved: %d entries", count)
+            logger.info("[STB_AUTOMATION] Vision map saved: %d entries", count)
     except ImportError:
         pass
     except Exception as e:
-        logger.warning("UI map save failed (non-fatal): %s", e)
+        logger.warning("Vision map save failed (non-fatal): %s", e)
     try:
         from .services import wifi_impairment, gremlin, capture, adb_manager
         # Deactivate gremlin if active
