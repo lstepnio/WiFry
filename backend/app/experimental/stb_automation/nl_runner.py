@@ -17,8 +17,8 @@ from typing import Optional
 from uuid import uuid4
 
 from ...config import settings
-from . import nav_model, test_flows, ui_map, vision_cache
-from .models import NavigationModel, TestFlow, TestStep
+from . import test_flows, vision_cache, vision_map
+from .models import TestFlow, TestStep
 
 logger = logging.getLogger("wifry.stb_automation.nl_runner")
 
@@ -221,21 +221,15 @@ def _build_user_prompt(prompt: str, device_id: Optional[str] = None) -> str:
     """Build the user message with all available device context."""
     parts = [f"Generate a test flow for the following scenario:\n\n{prompt}"]
 
-    # Current device state from vision cache
+    # Current device state
     current_state = _format_current_state()
     if current_state:
         parts.append(current_state)
 
-    # UI map — learned menu structure with exact key sequences
-    map_context = _format_ui_map_context()
+    # Vision map — unified menu structure with exact key sequences
+    map_context = _format_vision_map_context()
     if map_context:
         parts.append(map_context)
-
-    # Nav model — screen-level transitions (if crawl has been run)
-    if device_id:
-        model = nav_model.get_model(device_id)
-        if model and model.nodes:
-            parts.append(_format_nav_model_context(model))
 
     # Known screen descriptions from vision cache
     vision_context = _format_vision_cache_context()
@@ -263,31 +257,7 @@ def _build_refine_prompt(flow: TestFlow, refinement: str) -> str:
     )
 
 
-def _format_nav_model_context(model: NavigationModel) -> str:
-    """Format the navigation model as context for the AI."""
-    parts = ["Known screen map for this device:"]
-
-    for node_id, node in list(model.nodes.items())[:20]:  # Cap at 20 nodes
-        label = node.activity or node.package or node_id
-        parts.append(f"  - {label} (id: {node_id})")
-
-    if model.edges:
-        parts.append("\nKnown transitions:")
-        seen = set()
-        for edge in model.edges[:40]:  # Cap at 40 edges
-            key = f"{edge.from_node}->{edge.to_node}:{edge.action}"
-            if key not in seen:
-                seen.add(key)
-                from_label = model.nodes.get(edge.from_node)
-                to_label = model.nodes.get(edge.to_node)
-                fn = from_label.activity if from_label else edge.from_node
-                tn = to_label.activity if to_label else edge.to_node
-                parts.append(f"  - {fn} --[{edge.action}]--> {tn}")
-
-    if model.home_node_id:
-        home = model.nodes.get(model.home_node_id)
-        home_label = home.activity if home else model.home_node_id
-        parts.append(f"\nHome screen: {home_label}")
+    # _format_nav_model_context removed — absorbed into _format_vision_map_context
 
     return "\n".join(parts)
 
@@ -295,19 +265,19 @@ def _format_nav_model_context(model: NavigationModel) -> str:
 def _format_current_state() -> str:
     """Format the current screen state from the last vision result."""
     # Get the last known focused label from any screen
-    s = ui_map.stats()
+    s = vision_map.stats()
     if s["total_entries"] == 0:
         return ""
 
     # Find the most recently updated screen
-    screens = ui_map.get_all_screens()
+    screens = vision_map.get_all_screens()
     if not screens:
         return ""
 
     # Report current state from last_focused tracking
     parts = ["CURRENT DEVICE STATE:"]
     for screen in screens:
-        focused = ui_map.get_last_focused(screen["screen_key"])
+        focused = vision_map.get_last_focused(screen["screen_key"])
         if focused:
             parts.append(f"  Screen: {screen['screen_key']}")
             parts.append(f"  Currently focused on: {focused}")
@@ -316,14 +286,14 @@ def _format_current_state() -> str:
     return "\n".join(parts) if len(parts) > 1 else ""
 
 
-def _format_ui_map_context() -> str:
+def _format_vision_map_context() -> str:
     """Format the UI map as a readable menu structure.
 
     Builds a tree showing how to navigate between menu items using
     exact key presses. This is the primary context for generating
     accurate test flows.
     """
-    screens = ui_map.get_all_screens()
+    screens = vision_map.get_all_screens()
     if not screens:
         return ""
 
@@ -334,7 +304,7 @@ def _format_ui_map_context() -> str:
 
     for screen_summary in screens[:10]:
         screen_key = screen_summary["screen_key"]
-        entries = ui_map.get_screen_entries(screen_key)
+        entries = vision_map.get_screen_entries(screen_key)
         if not entries:
             continue
 

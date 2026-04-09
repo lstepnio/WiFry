@@ -247,21 +247,43 @@ class ChaosResult(BaseModel):
     seed_used: int = 0
 
 
-# --- UI Map (learned menu patterns) ---
+# --- Vision Map (unified learned navigation patterns) ---
 
 
-class UIMapEntry(BaseModel):
-    """A learned focus transition within a single screen."""
+class VisionScreen(BaseModel):
+    """A unique screen in the STB UI."""
 
-    screen_key: str = ""  # activity fingerprint (package/activity)
+    screen_key: str = ""  # "package/activity"
+    package: str = ""
+    activity: str = ""
+    screen_type: str = "unknown"  # from vision analysis
+    screen_title: str = ""
+    navigation_path: List[str] = []  # breadcrumb from vision
+    visit_count: int = 0
+    last_visited: str = ""
+    fingerprint: str = ""  # legacy 12-char hex (computed)
+
+
+class ElementTransition(BaseModel):
+    """A learned focus transition within or between screens."""
+
+    screen_key: str = ""  # which screen this was observed on
     action: str = ""  # "up", "down", "left", "right", "enter", "back"
-    from_focused: str = ""  # focused_label before action
-    to_focused: str = ""  # focused_label after action
-    to_screen_type: str = "unknown"  # screen_type after
-    to_screen_title: str = ""  # screen_title after
-    to_focused_position: str = ""  # position description
+    from_element: str = ""  # focused_label before action
+    to_element: str = ""  # focused_label after action
+    to_screen_key: str = ""  # target screen (same or different for cross-screen)
+    to_screen_type: str = "unknown"
+    to_screen_title: str = ""
+    to_focused_position: str = ""
     to_focused_confidence: str = "low"  # high, medium, low
     to_navigation_path: List[str] = []  # breadcrumb
-    observation_count: int = 0  # times this exact transition observed
-    confidence: float = 0.0  # 0.0-1.0, derived from observations + consistency
-    last_observed: str = ""  # ISO timestamp
+    observation_count: int = 0
+    confidence: float = 0.0  # 0.0-1.0
+    avg_transition_ms: float = 0.0
+    no_effect_count: int = 0
+    last_observed: str = ""
+    sources: List[str] = []  # ["crawl", "manual", "ai_vision", "cache_hit"]
+
+
+# Legacy alias for backward compatibility
+UIMapEntry = ElementTransition

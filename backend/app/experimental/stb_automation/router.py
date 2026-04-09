@@ -27,10 +27,10 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows, ui_map, vision_cache
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nl_runner, screen_reader, test_flows, vision_cache, vision_map
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
+from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
 
 logger = logging.getLogger("wifry.stb_automation.router")
 
@@ -71,7 +71,7 @@ class VisionDiag(BaseModel):
 
 def _fill_ratio(diag: VisionDiag) -> None:
     """Populate hit ratio fields on diagnostics."""
-    s = vision_cache.stats()
+    s = vision_map.cache_stats()
     diag.cache_hits_total = s["hits"]
     diag.cache_misses_total = s["misses"]
     diag.cache_hit_ratio_pct = s["hit_ratio_pct"]
@@ -90,12 +90,13 @@ def _check_vision_cache(
           caller to pass to ``_run_vision_analysis()``
     """
     threshold = threshold_override if threshold_override is not None else settings.stb_vision_cache_distance
-    s = vision_cache.stats()
+    cs = vision_map.cache_stats()
+    cache_size = len(vision_cache.items())
 
     diag = VisionDiag(
-        cache_size=s["size"],
-        nav_sequence=s["nav_sequence"],
-        cached_nav_sequence=s["last_cache_hit_nav_seq"],
+        cache_size=cache_size,
+        nav_sequence=cs["nav_sequence"],
+        cached_nav_sequence=cs["last_cache_hit_nav_seq"],
         hamming_threshold=threshold,
     )
 
@@ -106,7 +107,7 @@ def _check_vision_cache(
         diag.streamer_running = False
 
     # ── Fast path: no navigation since last cache hit ──────────────
-    fast_result = vision_cache.check_fast_path()
+    fast_result = vision_map.check_fast_path()
     if fast_result is not None:
         diag.cache_hit = True
         diag.invalidation_reason = "nav_fast_path"
@@ -146,7 +147,7 @@ def _check_vision_cache(
             diag.invalidation_reason = "cache_hit"
             diag.cache_size = s["size"]
 
-            vision_cache.update_fast_path(cached_result)
+            vision_map.update_fast_path(cached_result)
             _fill_ratio(diag)
             return cached_result, diag, frame, cache_key
 
@@ -181,8 +182,8 @@ async def _run_vision_analysis(
             diag.cache_hit = True
             diag.hamming_distance = 0
             diag.invalidation_reason = "cache_hit"
-            diag.cache_size = vision_cache.stats()["size"]
-            vision_cache.update_fast_path(cached_result)
+            diag.cache_size = len(vision_cache.items())
+            vision_map.update_fast_path(cached_result)
             _fill_ratio(diag)
             return cached_result, diag
 
@@ -198,8 +199,7 @@ async def _run_vision_analysis(
         _fill_ratio(diag)
         return None, diag
 
-    s = vision_cache.stats()
-    diag.invalidation_reason = "screen_changed" if s["size"] > 0 else "no_cache"
+    diag.invalidation_reason = "screen_changed" if len(vision_cache.items()) > 0 else "no_cache"
 
     try:
         from ..video_capture import analyzer
@@ -228,8 +228,8 @@ async def _run_vision_analysis(
         if cache_key:
             vision_cache.put(cache_key, vision_obj)
 
-        diag.cache_size = vision_cache.stats()["size"]
-        vision_cache.update_fast_path(vision_obj)
+        diag.cache_size = len(vision_cache.items())
+        vision_map.update_fast_path(vision_obj)
 
         _fill_ratio(diag)
         return vision_obj, diag
@@ -390,15 +390,15 @@ async def get_state(
             map_diag = UIMapDiag()
             if vision.focused_label:
                 screen_key = f"{state.package}/{state.activity}"
-                _map_action = ui_map.get_last_action()
-                _map_from_focused = ui_map.get_last_focused(screen_key)
+                _map_action = vision_map.get_last_action()
+                _map_from_focused = vision_map.get_last_focused(screen_key)
                 map_diag.screen_key = screen_key
                 map_diag.last_action = _map_action
                 map_diag.from_focused = _map_from_focused
                 map_diag.to_focused = vision.focused_label
-                map_diag.map_entries_for_screen = len(ui_map.get_screen_entries(screen_key))
+                map_diag.map_entries_for_screen = len(vision_map.get_screen_entries(screen_key))
                 if _map_action and _map_from_focused:
-                    ui_map.observe(
+                    vision_map.observe(
                         screen_key=screen_key,
                         action=_map_action,
                         from_focused=_map_from_focused,
@@ -414,7 +414,7 @@ async def get_state(
                     map_diag.observation_skipped_reason = (
                         "no_action" if not _map_action else "no_from_focused"
                     )
-                ui_map.set_last_focused(screen_key, vision.focused_label)
+                vision_map.set_last_focused(screen_key, vision.focused_label)
 
             stable_fp = fp.fingerprint(state)
             diag = _build_diag(state, stable_fp, "", timings)
@@ -431,7 +431,7 @@ async def get_state(
         # the UI map may predict the new state without any AI call.
         _map_screen_key = ""
         _map_from_focused = ""
-        _map_action = ui_map.get_last_action()
+        _map_action = vision_map.get_last_action()
 
         # Read minimal ADB to get screen_key for prediction
         monitor = get_monitor()
@@ -442,10 +442,10 @@ async def get_state(
             include_hierarchy=False,
         )
         _map_screen_key = f"{state.package}/{state.activity}"
-        _map_from_focused = ui_map.get_last_focused(_map_screen_key)
+        _map_from_focused = vision_map.get_last_focused(_map_screen_key)
 
         # Attempt prediction
-        map_prediction = ui_map.predict(
+        map_prediction = vision_map.predict(
             screen_key=_map_screen_key,
             action=_map_action,
             from_focused=_map_from_focused,
@@ -453,7 +453,7 @@ async def get_state(
 
         # ── MAP HIT: use prediction, skip AI call entirely ────────
         if map_prediction is not None:
-            vision_cache.credit_map_hit()  # correct hit/miss ratio
+            vision_map.credit_map_hit()  # correct hit/miss ratio
             predicted_vision = VisionAnalysis(
                 screen_type=map_prediction.to_screen_type,
                 screen_title=map_prediction.to_screen_title,
@@ -466,10 +466,10 @@ async def get_state(
             )
             state.vision = predicted_vision
             _enrich_focused_context(state, predicted_vision)
-            ui_map.set_last_focused(_map_screen_key, map_prediction.to_focused)
+            vision_map.set_last_focused(_map_screen_key, map_prediction.to_focused)
 
             # Record as observation (reinforces confidence)
-            ui_map.observe(
+            vision_map.observe(
                 screen_key=_map_screen_key,
                 action=_map_action,
                 from_focused=_map_from_focused,
@@ -494,7 +494,7 @@ async def get_state(
                 prediction_available=True,
                 prediction_confidence=map_prediction.confidence,
                 prediction_observations=map_prediction.observation_count,
-                map_entries_for_screen=len(ui_map.get_screen_entries(_map_screen_key)),
+                map_entries_for_screen=len(vision_map.get_screen_entries(_map_screen_key)),
             )
             diag.ui_map = map_diag
             diag.total_ms = int((time.time() - t0) * 1000)
@@ -519,7 +519,7 @@ async def get_state(
             screen_key=_map_screen_key,
             last_action=_map_action,
             from_focused=_map_from_focused,
-            map_entries_for_screen=len(ui_map.get_screen_entries(_map_screen_key)),
+            map_entries_for_screen=len(vision_map.get_screen_entries(_map_screen_key)),
         )
 
         if vision:
@@ -529,7 +529,7 @@ async def get_state(
 
             # Record observation in UI map
             if _map_from_focused and _map_action and vision.focused_label:
-                ui_map.observe(
+                vision_map.observe(
                     screen_key=_map_screen_key,
                     action=_map_action,
                     from_focused=_map_from_focused,
@@ -551,7 +551,7 @@ async def get_state(
 
             # Update last focused for next prediction
             if vision.focused_label:
-                ui_map.set_last_focused(_map_screen_key, vision.focused_label)
+                vision_map.set_last_focused(_map_screen_key, vision.focused_label)
 
         diag.ui_map = map_diag
         diag.total_ms = int((time.time() - t0) * 1000)
@@ -703,9 +703,9 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
     _check_flag()
 
     # Increment nav counter so vision cache fast-path knows to re-hash
-    vision_cache.increment_nav()
+    vision_map.increment_nav()
     # Record last action for UI map predictions
-    ui_map.set_last_action(req.action)
+    vision_map.set_last_action(req.action)
 
     if settings.mock_mode:
         result = await action_executor.navigate_mock(req.action)
@@ -766,66 +766,58 @@ async def crawl_step(config: CrawlConfig) -> dict:
 
 
 @router.get("/model")
-async def get_model(
-    device_id: str = Query(..., description="Device serial / ID"),
-) -> NavigationModel:
-    """STB_AUTOMATION — Get the full navigation model for a device."""
+async def get_model() -> dict:
+    """STB_AUTOMATION — Get the full vision map (screens + transitions)."""
     _check_flag()
-    model = nav_model.get_model(device_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail=f"No model found for device '{device_id}'")
-    return model
+    return {
+        "screens": {k: v.model_dump() for k, v in vision_map._screens.items()},
+        "transitions": [t.model_dump() for _, t in vision_map.items()],
+        "stats": vision_map.stats(),
+    }
 
 
-@router.get("/model/{node_id}")
-async def get_model_node(
-    node_id: str,
-    device_id: str = Query(..., description="Device serial / ID"),
-) -> ScreenNode:
-    """STB_AUTOMATION — Get a specific node from the navigation model."""
+@router.get("/model/{screen_key:path}")
+async def get_model_screen(screen_key: str) -> dict:
+    """STB_AUTOMATION — Get a specific screen from the vision map."""
     _check_flag()
-    model = nav_model.get_model(device_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail=f"No model found for device '{device_id}'")
-    node = nav_model.get_node(model, node_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
-    return node
+    screen = vision_map.get_screen(screen_key)
+    if screen is None:
+        raise HTTPException(status_code=404, detail=f"Screen '{screen_key}' not found")
+    entries = vision_map.get_screen_entries(screen_key)
+    return {
+        "screen": screen.model_dump(),
+        "transitions": [e.model_dump() for e in entries],
+    }
 
 
-class PathRequest(BaseModel):
-    device_id: str
-    from_node: str
-    to_node: str
+class ElementPathRequest(BaseModel):
+    screen_key: str
+    from_element: str
+    to_element: str
 
 
-class PathResponse(BaseModel):
+class ElementPathResponse(BaseModel):
     found: bool
     actions: List[str]
     hop_count: int
 
 
 @router.post("/model/path")
-async def find_path(req: PathRequest) -> PathResponse:
-    """STB_AUTOMATION — Find shortest action sequence between two nodes."""
+async def find_element_path_endpoint(req: ElementPathRequest) -> ElementPathResponse:
+    """STB_AUTOMATION — Find action sequence between two elements on a screen."""
     _check_flag()
-    model = nav_model.get_model(req.device_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail=f"No model found for device '{req.device_id}'")
-    path = nav_model.find_path(model, req.from_node, req.to_node)
+    path = vision_map.find_element_path(req.screen_key, req.from_element, req.to_element)
     if path is None:
-        return PathResponse(found=False, actions=[], hop_count=0)
-    return PathResponse(found=True, actions=path, hop_count=len(path))
+        return ElementPathResponse(found=False, actions=[], hop_count=0)
+    return ElementPathResponse(found=True, actions=path, hop_count=len(path))
 
 
 @router.delete("/model")
-async def delete_model(
-    device_id: str = Query(..., description="Device serial / ID"),
-) -> dict:
-    """STB_AUTOMATION — Delete the navigation model for a device."""
+async def delete_model() -> dict:
+    """STB_AUTOMATION — Clear the entire vision map."""
     _check_flag()
-    deleted = nav_model.delete_model(device_id)
-    return {"deleted": deleted, "device_id": device_id}
+    count = vision_map.clear()
+    return {"cleared": count}
 
 
 # ── Anomaly Detection (Phase 1D) ───────────────────────────────────
@@ -878,16 +870,17 @@ async def get_vision_cache_debug() -> VisionCacheDebug:
             focused_label=analysis.focused_label,
             tokens_used=analysis.tokens_used,
         ))
-    s = vision_cache.stats()
+    cs = vision_map.cache_stats()
+    vc_stats = vision_cache.stats()
     return VisionCacheDebug(
-        size=s["size"],
-        max_size=s["max_size"],
+        size=vc_stats["size"],
+        max_size=vc_stats["max_size"],
         threshold=settings.stb_vision_cache_distance,
-        nav_sequence=s["nav_sequence"],
+        nav_sequence=cs["nav_sequence"],
         has_perceptual_hash=fp.has_perceptual_hash(),
-        hits_total=s["hits"],
-        misses_total=s["misses"],
-        hit_ratio_pct=s["hit_ratio_pct"],
+        hits_total=cs["hits"],
+        misses_total=cs["misses"],
+        hit_ratio_pct=cs["hit_ratio_pct"],
         entries=entries,
     )
 
@@ -908,8 +901,8 @@ async def get_ui_map() -> dict:
     """STB_AUTOMATION — Get the learned UI map."""
     _check_flag()
     return {
-        "screens": ui_map.get_all_screens(),
-        "stats": ui_map.stats(),
+        "screens": vision_map.get_all_screens(),
+        "stats": vision_map.stats(),
     }
 
 
@@ -917,7 +910,7 @@ async def get_ui_map() -> dict:
 async def get_ui_map_screen(screen_key: str = Query(...)) -> dict:
     """STB_AUTOMATION — Get all learned transitions for a screen."""
     _check_flag()
-    entries = ui_map.get_screen_entries(screen_key)
+    entries = vision_map.get_screen_entries(screen_key)
     return {
         "screen_key": screen_key,
         "entries": [e.model_dump() for e in entries],
@@ -928,14 +921,14 @@ async def get_ui_map_screen(screen_key: str = Query(...)) -> dict:
 async def get_ui_map_graph() -> dict:
     """STB_AUTOMATION — Get the full UI map as a graph (nodes + edges)."""
     _check_flag()
-    all_screens = ui_map.get_all_screens()
+    all_screens = vision_map.get_all_screens()
     nodes = []  # unique focused elements across all screens
     edges = []  # transitions
     node_set: set = set()
 
     for screen_summary in all_screens:
         screen_key = screen_summary["screen_key"]
-        entries = ui_map.get_screen_entries(screen_key)
+        entries = vision_map.get_screen_entries(screen_key)
         for entry in entries:
             # Create node IDs that include screen context
             from_id = f"{screen_key}::{entry.from_focused}"
@@ -968,7 +961,7 @@ async def get_ui_map_graph() -> dict:
         "nodes": nodes,
         "edges": edges,
         "screens": [s["screen_key"] for s in all_screens],
-        "stats": ui_map.stats(),
+        "stats": vision_map.stats(),
     }
 
 
@@ -976,14 +969,14 @@ async def get_ui_map_graph() -> dict:
 async def get_ui_map_stats() -> dict:
     """STB_AUTOMATION — Get UI map prediction statistics."""
     _check_flag()
-    return ui_map.stats()
+    return vision_map.stats()
 
 
 @router.delete("/ui-map")
 async def clear_ui_map() -> dict:
     """STB_AUTOMATION — Clear the learned UI map."""
     _check_flag()
-    count = ui_map.clear()
+    count = vision_map.clear()
     return {"cleared": count}
 
 
