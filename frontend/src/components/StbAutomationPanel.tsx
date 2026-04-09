@@ -1224,12 +1224,7 @@ export default function StbAutomationPanel() {
               c >= 0.8 ? 'text-green-600 dark:text-green-400' :
               c >= 0.5 ? 'text-amber-600 dark:text-amber-400' :
               'text-red-600 dark:text-red-400';
-            const confStroke = (c: number) =>
-              c >= 0.8 ? '#22c55e' : c >= 0.5 ? '#f59e0b' : '#ef4444';
-            const actionColor: Record<string, string> = {
-              up: '#818cf8', down: '#818cf8', left: '#60a5fa', right: '#60a5fa',
-              enter: '#34d399', back: '#fb923c', home: '#f472b6', menu: '#a78bfa',
-            };
+            /* tree viz uses inline styles — no extra consts needed */
 
             const loadMap = async () => {
               setMapLoading(true);
@@ -1242,25 +1237,7 @@ export default function StbAutomationPanel() {
             };
             if (!mapData && !mapLoading) { loadMap(); }
 
-            // Build graph nodes/edges from screen entries for SVG visualization
-            const graphNodes: Array<{ id: string; label: string; x: number; y: number }> = [];
-            const graphEdges: Array<{ from: string; to: string; action: string; confidence: number; observations: number }> = [];
-            if (mapScreenEntries.length > 0) {
-              const nodeSet = new Map<string, { id: string; label: string }>();
-              for (const e of mapScreenEntries) {
-                if (!nodeSet.has(e.from_focused)) nodeSet.set(e.from_focused, { id: e.from_focused, label: e.from_focused });
-                if (!nodeSet.has(e.to_focused)) nodeSet.set(e.to_focused, { id: e.to_focused, label: e.to_focused });
-                graphEdges.push({ from: e.from_focused, to: e.to_focused, action: e.action, confidence: e.confidence, observations: e.observation_count });
-              }
-              // Circular layout
-              const nodeArr = Array.from(nodeSet.values());
-              const cx = 300, cy = 200, r = Math.min(150, 40 * nodeArr.length);
-              nodeArr.forEach((n, i) => {
-                const angle = (2 * Math.PI * i) / nodeArr.length - Math.PI / 2;
-                graphNodes.push({ ...n, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
-              });
-            }
-            const nodePos = new Map(graphNodes.map(n => [n.id, { x: n.x, y: n.y }]));
+            /* Tree visualization computed inline in the render block */
 
             return (
               <div className="space-y-4">
@@ -1319,79 +1296,103 @@ export default function StbAutomationPanel() {
                   </div>
                 )}
 
-                {/* Graph visualization */}
-                {graphNodes.length > 0 && (
-                  <div className={card}>
-                    <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-                      Navigation Graph: <span className="font-mono text-[10px]">{mapSelectedScreen}</span>
-                    </h4>
-                    <svg viewBox="0 0 600 400" className="w-full rounded border border-gray-200 bg-gray-950 dark:border-gray-700" style={{ minHeight: 300 }}>
-                      <defs>
-                        {graphEdges.map((e, i) => (
-                          <marker key={`arrow-${i}`} id={`arrow-${i}`} markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                            <path d="M0,0 L8,3 L0,6" fill={confStroke(e.confidence)} fillOpacity="0.7" />
-                          </marker>
-                        ))}
-                      </defs>
-                      {/* Edges */}
-                      {graphEdges.map((e, i) => {
-                        const from = nodePos.get(e.from);
-                        const to = nodePos.get(e.to);
-                        if (!from || !to) return null;
-                        // Self-loop
-                        if (e.from === e.to) {
-                          return (
-                            <g key={`edge-${i}`}>
-                              <path d={`M${from.x},${from.y - 20} C${from.x - 40},${from.y - 60} ${from.x + 40},${from.y - 60} ${from.x},${from.y - 20}`}
-                                fill="none" stroke={confStroke(e.confidence)} strokeWidth={Math.max(1, Math.min(3, e.observations))} strokeOpacity="0.6" markerEnd={`url(#arrow-${i})`} />
-                            </g>
-                          );
-                        }
-                        // Offset for parallel edges (same pair, different direction)
-                        const dx = to.x - from.x, dy = to.y - from.y;
-                        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-                        const nx = -dy / len * 8, ny = dx / len * 8;
-                        // Shorten to avoid overlapping nodes
-                        const shorten = 24;
-                        const sx = from.x + (dx / len) * shorten + nx;
-                        const sy = from.y + (dy / len) * shorten + ny;
-                        const ex = to.x - (dx / len) * shorten + nx;
-                        const ey = to.y - (dy / len) * shorten + ny;
-                        const mx = (sx + ex) / 2 + nx, my = (sy + ey) / 2 + ny;
-                        return (
-                          <g key={`edge-${i}`}>
-                            <path d={`M${sx},${sy} Q${mx},${my} ${ex},${ey}`}
-                              fill="none" stroke={confStroke(e.confidence)} strokeWidth={Math.max(1, Math.min(3, e.observations))}
-                              strokeOpacity="0.6" markerEnd={`url(#arrow-${i})`} />
-                            <text x={mx} y={my - 4} textAnchor="middle" fontSize="8" fill={actionColor[e.action] || '#94a3b8'} fillOpacity="0.9">
-                              {e.action} ({Math.round(e.confidence * 100)}%)
-                            </text>
-                          </g>
-                        );
-                      })}
-                      {/* Nodes */}
-                      {graphNodes.map(n => (
-                        <g key={n.id}>
-                          <circle cx={n.x} cy={n.y} r="20" fill="#1e293b" stroke="#475569" strokeWidth="1.5" />
-                          <text x={n.x} y={n.y + 1} textAnchor="middle" dominantBaseline="middle"
-                            fontSize="7" fill="#e2e8f0" fontWeight="500">
-                            {n.label.length > 14 ? n.label.slice(0, 13) + '…' : n.label}
-                          </text>
-                        </g>
-                      ))}
-                      {/* Legend */}
-                      <g transform="translate(10, 370)">
-                        <rect x="0" y="-6" width="8" height="8" rx="1" fill="#22c55e" />
-                        <text x="12" y="1" fontSize="7" fill="#94a3b8">≥80%</text>
-                        <rect x="45" y="-6" width="8" height="8" rx="1" fill="#f59e0b" />
-                        <text x="57" y="1" fontSize="7" fill="#94a3b8">≥50%</text>
-                        <rect x="90" y="-6" width="8" height="8" rx="1" fill="#ef4444" />
-                        <text x="102" y="1" fontSize="7" fill="#94a3b8">&lt;50%</text>
-                        <text x="140" y="1" fontSize="7" fill="#64748b">Edge color = confidence</text>
-                      </g>
-                    </svg>
-                  </div>
-                )}
+                {/* Tree visualization */}
+                {mapScreenEntries.length > 0 && (() => {
+                  // Build tree: "enter" creates depth, D-pad creates siblings
+                  type TreeNode = { label: string; children: TreeNode[]; enterConf: number; enterObs: number; siblings: Array<{ action: string; to: string; confidence: number; observations: number }> };
+                  const enterEdges = mapScreenEntries.filter(e => e.action === 'enter');
+                  const dpadEdges = mapScreenEntries.filter(e => e.action !== 'enter' && e.action !== 'back');
+
+                  // Find all unique labels and their "enter" children
+                  const childrenOf = new Map<string, Array<{ to: string; conf: number; obs: number }>>();
+                  for (const e of enterEdges) {
+                    if (!childrenOf.has(e.from_focused)) childrenOf.set(e.from_focused, []);
+                    childrenOf.get(e.from_focused)!.push({ to: e.to_focused, conf: e.confidence, obs: e.observation_count });
+                  }
+
+                  // Find root candidates: labels that appear as from_focused but NOT as to_focused of an "enter"
+                  const enterTargets = new Set(enterEdges.map(e => e.to_focused));
+                  const allLabels = new Set([...mapScreenEntries.map(e => e.from_focused), ...mapScreenEntries.map(e => e.to_focused)]);
+                  const rootCandidates = Array.from(allLabels).filter(l => !enterTargets.has(l));
+
+                  // Group D-pad siblings per label
+                  const siblingsOf = new Map<string, TreeNode['siblings']>();
+                  for (const e of dpadEdges) {
+                    if (!siblingsOf.has(e.from_focused)) siblingsOf.set(e.from_focused, []);
+                    siblingsOf.get(e.from_focused)!.push({ action: e.action, to: e.to_focused, confidence: e.confidence, observations: e.observation_count });
+                  }
+
+                  // Build tree recursively (with visited guard)
+                  const visited = new Set<string>();
+                  const buildNode = (label: string): TreeNode => {
+                    visited.add(label);
+                    const children = (childrenOf.get(label) || [])
+                      .filter(c => !visited.has(c.to))
+                      .map(c => ({ ...buildNode(c.to), enterConf: c.conf, enterObs: c.obs }));
+                    return { label, children, enterConf: 0, enterObs: 0, siblings: siblingsOf.get(label) || [] };
+                  };
+
+                  const roots = rootCandidates.length > 0
+                    ? rootCandidates.map(r => buildNode(r))
+                    : allLabels.size > 0 ? [buildNode(Array.from(allLabels)[0])] : [];
+
+                  // Render tree as indented list (clean, readable, like a manual sitemap)
+                  const renderNode = (node: TreeNode, depth: number, key: string): React.ReactNode => {
+                    const indent = depth * 20;
+                    const confBg = node.enterConf >= 0.8 ? 'bg-green-500' : node.enterConf >= 0.5 ? 'bg-amber-500' : node.enterConf > 0 ? 'bg-red-500' : 'bg-gray-500';
+                    const sibCount = node.siblings.length;
+                    return (
+                      <div key={key}>
+                        <div className="flex items-center gap-1 py-0.5 hover:bg-gray-800/30" style={{ paddingLeft: indent }}>
+                          {/* Connector line */}
+                          {depth > 0 && (
+                            <span className="mr-1 text-gray-600 dark:text-gray-500">└─</span>
+                          )}
+                          {/* Confidence dot */}
+                          {depth > 0 && (
+                            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${confBg}`} title={`enter: ${Math.round(node.enterConf * 100)}% (${node.enterObs}x)`} />
+                          )}
+                          {/* Label */}
+                          <span className="text-xs font-medium text-gray-200">{node.label}</span>
+                          {/* Sibling indicators */}
+                          {sibCount > 0 && (
+                            <span className="ml-1 text-[9px] text-gray-500">
+                              {node.siblings.map(s => {
+                                const arrow = s.action === 'up' ? '↑' : s.action === 'down' ? '↓' : s.action === 'left' ? '←' : s.action === 'right' ? '→' : s.action;
+                                const sConf = s.confidence >= 0.8 ? 'text-green-500' : s.confidence >= 0.5 ? 'text-amber-500' : 'text-red-500';
+                                return <span key={s.action + s.to} className={`ml-1 ${sConf}`} title={`${s.action} → ${s.to} (${Math.round(s.confidence * 100)}%, ${s.observations}x)`}>{arrow}{s.to.length > 10 ? s.to.slice(0, 9) + '…' : s.to}</span>;
+                              })}
+                            </span>
+                          )}
+                          {/* Enter confidence badge */}
+                          {depth > 0 && node.enterConf > 0 && (
+                            <span className={`ml-auto text-[9px] tabular-nums ${node.enterConf >= 0.8 ? 'text-green-500' : node.enterConf >= 0.5 ? 'text-amber-500' : 'text-red-500'}`}>
+                              {Math.round(node.enterConf * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        {node.children.map((c, i) => renderNode(c, depth + 1, `${key}-${i}`))}
+                      </div>
+                    );
+                  };
+
+                  return roots.length > 0 ? (
+                    <div className={card}>
+                      <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                        Menu Tree: <span className="font-mono text-[10px]">{mapSelectedScreen}</span>
+                      </h4>
+                      <div className="rounded border border-gray-800 bg-gray-950 p-3 font-mono">
+                        {roots.map((r, i) => renderNode(r, 0, `root-${i}`))}
+                      </div>
+                      <div className="mt-2 flex gap-3 text-[9px] text-gray-500">
+                        <span><span className="inline-block h-2 w-2 rounded-full bg-green-500" /> ≥80%</span>
+                        <span><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> ≥50%</span>
+                        <span><span className="inline-block h-2 w-2 rounded-full bg-red-500" /> &lt;50%</span>
+                        <span className="text-gray-600">● = enter confidence &nbsp; arrows = D-pad siblings</span>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
 
                 {/* Transitions table */}
                 {mapSelectedScreen && mapScreenEntries.length > 0 && (
