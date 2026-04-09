@@ -412,6 +412,10 @@ export async function getUIMapScreen(screenKey: string): Promise<{ screen_key: s
   return request(`/experimental/stb/ui-map/screen?screen_key=${encodeURIComponent(screenKey)}`);
 }
 
+export async function getUIMapGraph(): Promise<import('../types').UIMapGraph> {
+  return request('/experimental/stb/ui-map/graph');
+}
+
 export async function getUIMapStats(): Promise<import('../types').UIMapStats> {
   return request('/experimental/stb/ui-map/stats');
 }
