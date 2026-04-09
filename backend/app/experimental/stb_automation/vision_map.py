@@ -369,6 +369,16 @@ def observe_transition(
     return entry
 
 
+def observe(**kwargs) -> ElementTransition:
+    """Legacy compatibility wrapper — maps old ui_map.observe() field names."""
+    mapped = dict(kwargs)
+    if "from_focused" in mapped:
+        mapped["from_element"] = mapped.pop("from_focused")
+    if "to_focused" in mapped:
+        mapped["to_element"] = mapped.pop("to_focused")
+    return observe_transition(**mapped)
+
+
 def _upsert_screen(
     screen_key: str,
     screen_type: str = "unknown",
