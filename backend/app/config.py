@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     ai_model: str = ""  # Empty = provider default (gpt-5.4-mini / claude-sonnet-4-20250514)
 
     # STB vision cache
-    stb_vision_cache_distance: int = 6  # Hamming distance threshold for perceptual hash matching
+    stb_vision_cache_distance: int = 0  # Hamming distance threshold (0 = exact match, used with quantized hash)
     stb_vision_cache_max: int = 1000  # Max entries in vision LRU cache
 
     # tshark processing

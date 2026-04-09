@@ -384,9 +384,18 @@ export async function getStbStatus(): Promise<import('../types').StbStatus> {
   return request('/experimental/stb/status');
 }
 
-export async function getStbState(serial: string, includeHierarchy: boolean = true, includeVision: boolean = false): Promise<import('../types').StbScreenStateResponse> {
+export async function getStbState(serial: string, includeHierarchy: boolean = true, includeVision: boolean = false, visionThreshold?: number): Promise<import('../types').StbScreenStateResponse> {
   const params = new URLSearchParams({ serial, include_hierarchy: String(includeHierarchy), include_vision: String(includeVision) });
+  if (visionThreshold !== undefined) params.set('vision_threshold', String(visionThreshold));
   return request(`/experimental/stb/state?${params}`);
+}
+
+export async function getStbVisionCache(): Promise<import('../types').StbVisionCacheDebug> {
+  return request('/experimental/stb/vision/cache');
+}
+
+export async function clearStbVisionCache(): Promise<{ cleared: number }> {
+  return request('/experimental/stb/vision/cache', { method: 'DELETE' });
 }
 
 export async function getStbEvents(lastN: number = 20): Promise<import('../types').StbLogcatEvent[]> {

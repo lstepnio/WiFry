@@ -667,6 +667,30 @@ export interface StbVisionDiag {
   hamming_threshold: number;
   hash_type: string;
   invalidation_reason: string;
+  // Hit ratio
+  cache_hits_total: number;
+  cache_misses_total: number;
+  cache_hit_ratio_pct: number;
+}
+
+export interface StbVisionCacheEntry {
+  hash_key: string;
+  screen_type: string;
+  screen_title: string;
+  focused_label: string;
+  tokens_used: number;
+}
+
+export interface StbVisionCacheDebug {
+  size: number;
+  max_size: number;
+  threshold: number;
+  nav_sequence: number;
+  has_perceptual_hash: boolean;
+  hits_total: number;
+  misses_total: number;
+  hit_ratio_pct: number;
+  entries: StbVisionCacheEntry[];
 }
 
 export interface StbScreenStateDiag {
@@ -676,6 +700,16 @@ export interface StbScreenStateDiag {
   vision: StbVisionDiag | null;
   adb_signals: number;
   read_ms: number;
+  // Per-stage timing breakdown
+  adb_foreground_ms?: number;
+  adb_hierarchy_ms?: number;
+  adb_fragments_ms?: number;
+  adb_window_title_ms?: number;
+  adb_total_ms?: number;
+  fingerprint_ms?: number;
+  frame_hash_ms?: number;
+  total_ms?: number;
+  vision_fast_path?: boolean;
 }
 
 export interface StbScreenStateResponse {
