@@ -80,11 +80,13 @@ export default function StbAutomationPanel() {
   const [activeSection, setActiveSection] = useState<PanelSection>('remote');
 
   // ADB device discovery (polls every 5s)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const deviceFetcher = useCallback((_signal: AbortSignal) => api.getAdbDevices(), []);
   const { data: devices, refresh: refreshDevices } = useApi<AdbDevice[]>(deviceFetcher, 5000);
 
   // STB status (polls every 5s, only when device selected)
   const stbFetcher = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async (_signal: AbortSignal) => {
       if (!selectedSerial) return null;
       const [s, ev, an] = await Promise.all([
