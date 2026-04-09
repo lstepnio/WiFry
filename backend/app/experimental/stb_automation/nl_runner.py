@@ -17,7 +17,7 @@ from typing import Optional
 from uuid import uuid4
 
 from ...config import settings
-from . import nav_model, test_flows, ui_map
+from . import nav_model, test_flows, ui_map, vision_cache
 from .models import NavigationModel, TestFlow, TestStep
 
 logger = logging.getLogger("wifry.stb_automation.nl_runner")
@@ -218,19 +218,29 @@ async def enrich_state_with_vision(serial: str) -> dict:
 
 
 def _build_user_prompt(prompt: str, device_id: Optional[str] = None) -> str:
-    """Build the user message for flow generation."""
+    """Build the user message with all available device context."""
     parts = [f"Generate a test flow for the following scenario:\n\n{prompt}"]
 
-    # Include nav model context if available
+    # Current device state from vision cache
+    current_state = _format_current_state()
+    if current_state:
+        parts.append(current_state)
+
+    # UI map — learned menu structure with exact key sequences
+    map_context = _format_ui_map_context()
+    if map_context:
+        parts.append(map_context)
+
+    # Nav model — screen-level transitions (if crawl has been run)
     if device_id:
         model = nav_model.get_model(device_id)
         if model and model.nodes:
             parts.append(_format_nav_model_context(model))
 
-    # Include UI map data — learned menu patterns with actual item names
-    map_context = _format_ui_map_context()
-    if map_context:
-        parts.append(map_context)
+    # Known screen descriptions from vision cache
+    vision_context = _format_vision_cache_context()
+    if vision_context:
+        parts.append(vision_context)
 
     return "\n\n".join(parts)
 
@@ -282,49 +292,145 @@ def _format_nav_model_context(model: NavigationModel) -> str:
     return "\n".join(parts)
 
 
-def _format_ui_map_context() -> str:
-    """Format the learned UI map as context for the AI.
+def _format_current_state() -> str:
+    """Format the current screen state from the last vision result."""
+    # Get the last known focused label from any screen
+    s = ui_map.stats()
+    if s["total_entries"] == 0:
+        return ""
 
-    Provides the AI with actual menu item names and D-pad transitions
-    so it can generate realistic navigation sequences.
+    # Find the most recently updated screen
+    screens = ui_map.get_all_screens()
+    if not screens:
+        return ""
+
+    # Report current state from last_focused tracking
+    parts = ["CURRENT DEVICE STATE:"]
+    for screen in screens:
+        focused = ui_map.get_last_focused(screen["screen_key"])
+        if focused:
+            parts.append(f"  Screen: {screen['screen_key']}")
+            parts.append(f"  Currently focused on: {focused}")
+            break
+
+    return "\n".join(parts) if len(parts) > 1 else ""
+
+
+def _format_ui_map_context() -> str:
+    """Format the UI map as a readable menu structure.
+
+    Builds a tree showing how to navigate between menu items using
+    exact key presses. This is the primary context for generating
+    accurate test flows.
     """
     screens = ui_map.get_all_screens()
     if not screens:
         return ""
 
-    parts = ["Learned menu navigation patterns (from UI map):"]
+    parts = [
+        "LEARNED MENU MAP (verified by observation):",
+        "Use these EXACT key sequences — they are confirmed to work on this device.",
+    ]
 
-    for screen_summary in screens[:10]:  # Cap at 10 screens
+    for screen_summary in screens[:10]:
         screen_key = screen_summary["screen_key"]
         entries = ui_map.get_screen_entries(screen_key)
         if not entries:
             continue
 
-        parts.append(f"\n  Screen: {screen_key}")
+        # Extract a friendly screen name from the activity
+        activity = screen_key.split("/")[-1] if "/" in screen_key else screen_key
+        parts.append(f"\n--- {activity} ---")
 
-        # Group by from_focused to show menu structure
-        from_items: dict[str, list] = {}
+        # Build ordered menu items by following down/right chains
+        # Group transitions by action type
+        down_chain: dict[str, str] = {}  # from → to (via down)
+        up_chain: dict[str, str] = {}  # from → to (via up)
+        left_chain: dict[str, str] = {}
+        right_chain: dict[str, str] = {}
+        enter_targets: dict[str, str] = {}  # from → to (via enter)
+
         for e in entries:
-            if e.from_focused not in from_items:
-                from_items[e.from_focused] = []
-            from_items[e.from_focused].append(e)
+            if e.confidence < 0.3:
+                continue
+            if e.action == "down":
+                down_chain[e.from_focused] = e.to_focused
+            elif e.action == "up":
+                up_chain[e.from_focused] = e.to_focused
+            elif e.action == "right":
+                right_chain[e.from_focused] = e.to_focused
+            elif e.action == "left":
+                left_chain[e.from_focused] = e.to_focused
+            elif e.action == "enter":
+                enter_targets[e.from_focused] = e.to_focused
 
-        for from_label, transitions in list(from_items.items())[:15]:
-            moves = []
-            for t in transitions:
-                if t.confidence >= 0.5:
-                    moves.append(f"{t.action}→{t.to_focused}")
-            if moves:
-                parts.append(f"    [{from_label}]: {', '.join(moves)}")
+        # Build vertical menu order from down chain
+        if down_chain:
+            # Find the top item (not a target of any down)
+            all_targets = set(down_chain.values())
+            top_items = [k for k in down_chain if k not in all_targets]
+            if top_items:
+                parts.append("  Vertical menu (navigate with up/down):")
+                current = top_items[0]
+                idx = 1
+                visited = set()
+                while current and current not in visited:
+                    visited.add(current)
+                    enter_note = f" → [enter] opens: {enter_targets[current]}" if current in enter_targets else ""
+                    parts.append(f"    {idx}. {current}{enter_note}")
+                    current = down_chain.get(current)
+                    idx += 1
+                # Add last item if it's only a target
+                if current and current not in visited:
+                    enter_note = f" → [enter] opens: {enter_targets[current]}" if current in enter_targets else ""
+                    parts.append(f"    {idx}. {current}{enter_note}")
 
-    if len(parts) <= 1:
+        # Build horizontal menu order from right chain
+        if right_chain:
+            all_targets = set(right_chain.values())
+            left_items = [k for k in right_chain if k not in all_targets]
+            if left_items:
+                parts.append("  Horizontal menu (navigate with left/right):")
+                current = left_items[0]
+                items = []
+                visited = set()
+                while current and current not in visited:
+                    visited.add(current)
+                    items.append(current)
+                    current = right_chain.get(current)
+                if current and current not in visited:
+                    items.append(current)
+                parts.append(f"    {' ↔ '.join(items)}")
+
+    if len(parts) <= 2:
         return ""
 
     parts.append(
-        "\nUse these known menu patterns to generate accurate key sequences. "
-        "The patterns show which D-pad action moves focus between menu items."
+        "\nIMPORTANT: Use the exact menu item names and key sequences above. "
+        "Count the number of 'down' presses needed from the top of a menu to "
+        "reach the target item. For example, if 'Settings' is item #5, you "
+        "need 4 'down' presses from the top."
     )
     return "\n".join(parts)
+
+
+def _format_vision_cache_context() -> str:
+    """Format known screen descriptions from the vision cache."""
+    cache_items = vision_cache.items()
+    if not cache_items:
+        return ""
+
+    parts = ["KNOWN SCREEN DESCRIPTIONS (from AI vision analysis):"]
+    seen_types = set()
+
+    for _key, analysis in cache_items[-15:]:  # Last 15 entries
+        desc = f"{analysis.screen_type}: {analysis.screen_title or analysis.focused_label}"
+        if desc not in seen_types:
+            seen_types.add(desc)
+            nav = " > ".join(analysis.navigation_path) if analysis.navigation_path else ""
+            parts.append(f"  - {desc}" + (f" (nav: {nav})" if nav else ""))
+
+    return "\n".join(parts) if len(parts) > 1 else ""
 
 
 # ── AI Provider Calls ─────────────────────────────────────────────────
