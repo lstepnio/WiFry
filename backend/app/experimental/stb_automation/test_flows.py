@@ -285,25 +285,23 @@ async def _replay_loop(flow: TestFlow) -> None:
 
             # ── Assertions ──────────────────────────────────────────
             step_failed = False
-            post_fp = fp.fingerprint(result.post_state)
+            post_fp = fp.fingerprint_from_activity(
+                result.post_state.package, result.post_state.activity,
+            )
 
-            # ADB-based assertions (fingerprint / activity)
+            # ADB-based assertions (activity fingerprint)
             if step.expected_screen_id and post_fp != step.expected_screen_id:
-                act_fp = fp.fingerprint_from_activity(
-                    result.post_state.package, result.post_state.activity,
+                step_failed = True
+                logger.warning(
+                    "[STB_AUTOMATION] Flow step %d assertion failed: expected fp %s, got %s",
+                    i, step.expected_screen_id[:8], post_fp[:8],
                 )
-                if step.expected_activity and result.post_state.activity != step.expected_activity:
-                    step_failed = True
-                    logger.warning(
-                        "[STB_AUTOMATION] Flow step %d assertion failed: expected activity %s, got %s",
-                        i, step.expected_activity, result.post_state.activity,
-                    )
-                elif act_fp != step.expected_screen_id:
-                    step_failed = True
-                    logger.warning(
-                        "[STB_AUTOMATION] Flow step %d assertion failed: expected fp %s, got %s",
-                        i, step.expected_screen_id[:8], post_fp[:8],
-                    )
+            if step.expected_activity and result.post_state.activity != step.expected_activity:
+                step_failed = True
+                logger.warning(
+                    "[STB_AUTOMATION] Flow step %d assertion failed: expected activity %s, got %s",
+                    i, step.expected_activity, result.post_state.activity,
+                )
 
             # Vision-based assertions (work on NAF STBs)
             vision = result.post_state.vision

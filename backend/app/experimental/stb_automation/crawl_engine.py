@@ -8,6 +8,10 @@ Back-tracking: uses ``back`` key to return to parent.  If ``back``
 goes somewhere unexpected, falls back to ``home`` and replays the
 path from the navigation model.
 
+Uses activity-based fingerprints (no hierarchy) for speed.  The UI
+map is fed observations from each transition so it learns menu
+patterns during the crawl.
+
 The engine runs as an async background task and can be paused,
 resumed, or stopped via the API.
 """
@@ -18,7 +22,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional, Set
 
-from . import action_executor, fingerprint as fp, nav_model, screen_reader
+from . import action_executor, fingerprint as fp, nav_model, screen_reader, ui_map
 from .logcat_monitor import get_monitor
 from .models import CrawlConfig, CrawlStatus, NavigationModel, ScreenNode, ScreenState
 
@@ -72,19 +76,16 @@ async def stop_crawl() -> CrawlStatus:
 
 
 async def crawl_step(config: CrawlConfig) -> dict:
-    """Execute a single exploration step (manual mode).
-
-    Reads the current state, tries the next unexplored action, and
-    records the result.  Returns the transition details.
-    """
+    """Execute a single exploration step (manual mode)."""
     model = nav_model.get_or_create_model(config.serial)
     monitor = get_monitor()
 
     state, _ = await screen_reader.read_screen_state(
         config.serial,
         recent_events=monitor.get_events(5) if monitor.is_active else [],
+        include_hierarchy=False,
     )
-    node_id = fp.fingerprint(state)
+    node_id = fp.fingerprint_from_activity(state.package, state.activity)
     node = _state_to_node(state, node_id)
     nav_model.upsert_node(model, node)
 
@@ -111,7 +112,9 @@ async def crawl_step(config: CrawlConfig) -> dict:
         monitor=monitor,
     )
 
-    post_id = fp.fingerprint(result.post_state)
+    post_id = fp.fingerprint_from_activity(
+        result.post_state.package, result.post_state.activity,
+    )
     post_node = _state_to_node(result.post_state, post_id)
     nav_model.upsert_node(model, post_node)
     nav_model.record_transition(
@@ -146,8 +149,9 @@ async def _crawl_loop(config: CrawlConfig) -> None:
         state, _ = await screen_reader.read_screen_state(
             config.serial,
             recent_events=monitor.get_events(5) if monitor.is_active else [],
+            include_hierarchy=False,
         )
-        root_id = fp.fingerprint(state)
+        root_id = fp.fingerprint_from_activity(state.package, state.activity)
         root_node = _state_to_node(state, root_id)
         nav_model.upsert_node(model, root_node)
 
@@ -186,6 +190,10 @@ async def _crawl_loop(config: CrawlConfig) -> None:
 
             _crawl_status.current_node_id = current_id
 
+            # Track pre-navigate focused label for UI map
+            screen_key = f"{actual_state.package}/{actual_state.activity}"
+            pre_focused = ui_map.get_last_focused(screen_key)
+
             # Try each action from this node
             for action in config.explore_actions:
                 if _crawl_cancel.is_set():
@@ -206,7 +214,9 @@ async def _crawl_loop(config: CrawlConfig) -> None:
                 transitions += 1
                 _crawl_status.transitions_executed = transitions
 
-                post_id = fp.fingerprint(result.post_state)
+                post_id = fp.fingerprint_from_activity(
+                    result.post_state.package, result.post_state.activity,
+                )
                 post_node = _state_to_node(result.post_state, post_id)
                 nav_model.upsert_node(model, post_node)
                 nav_model.record_transition(
@@ -216,7 +226,7 @@ async def _crawl_loop(config: CrawlConfig) -> None:
 
                 _crawl_status.nodes_discovered = len(model.nodes)
 
-                if result.transitioned and post_id not in model.nodes or post_node.visit_count <= 1:
+                if result.transitioned and (post_id not in model.nodes or post_node.visit_count <= 1):
                     # New node — add to BFS queue
                     queue.append((post_id, depth + 1, path + [action]))
 
@@ -231,7 +241,9 @@ async def _crawl_loop(config: CrawlConfig) -> None:
                     transitions += 1
                     _crawl_status.transitions_executed = transitions
 
-                    back_id = fp.fingerprint(back_result.post_state)
+                    back_id = fp.fingerprint_from_activity(
+                        back_result.post_state.package, back_result.post_state.activity,
+                    )
                     back_node = _state_to_node(back_result.post_state, back_id)
                     nav_model.upsert_node(model, back_node)
                     nav_model.record_transition(
@@ -260,6 +272,7 @@ async def _crawl_loop(config: CrawlConfig) -> None:
         _crawl_status.error = str(e)
     finally:
         nav_model.save_model(config.serial)
+        ui_map.save()
         logger.info(
             "[STB_AUTOMATION] Crawl finished: %d nodes, %d transitions",
             len(model.nodes), transitions,
@@ -283,7 +296,9 @@ async def _navigate_to(
         settle_timeout_ms=config.settle_timeout_ms,
         monitor=monitor,
     )
-    home_id = fp.fingerprint(home_result.post_state)
+    home_id = fp.fingerprint_from_activity(
+        home_result.post_state.package, home_result.post_state.activity,
+    )
 
     if home_id == target_id:
         return True
@@ -300,7 +315,9 @@ async def _navigate_to(
             settle_timeout_ms=config.settle_timeout_ms,
             monitor=monitor,
         )
-        current_id = fp.fingerprint(result.post_state)
+        current_id = fp.fingerprint_from_activity(
+            result.post_state.package, result.post_state.activity,
+        )
         if current_id == target_id:
             return True
 
@@ -311,12 +328,7 @@ async def _navigate_to(
 
 
 def _state_to_node(state: ScreenState, node_id: str) -> ScreenNode:
-    """Convert a ScreenState into a ScreenNode.
-
-    When vision analysis is available (from AI vision cache), enrich the
-    node with screen_type, title, and the full vision_analysis dict.
-    This gives NAF STBs meaningful screen labels in the navigation graph.
-    """
+    """Convert a ScreenState into a ScreenNode."""
     screen_type = "unknown"
     title = ""
     vision_analysis = None
