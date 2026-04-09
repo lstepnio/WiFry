@@ -41,40 +41,63 @@ router = APIRouter(
 
 _FLAG_NAME = "stb_automation"
 
-# ── Vision cache (keyed by visual_hash, NOT stable fingerprint) ───
-# The stable fingerprint uses only class_name + resource_id which
-# doesn't change on NAF-heavy STBs.  visual_hash includes text,
-# bounds, and focused state — changes every time focus moves.
-_VISION_CACHE_MAX = 50
-_VISION_CACHE_TTL = 300  # seconds
-_vision_cache: OrderedDict[str, tuple[float, VisionAnalysis]] = OrderedDict()
+# ── Vision cache — perceptual hash with nearest-neighbor lookup ────
+# Uses dHash (imagehash) on center-cropped HDMI frames.  Two captures
+# of the same screen have Hamming distance 0-2 despite JPEG noise.
+# No TTL — entries are valid as long as the screen looks the same.
+# LRU eviction bounds memory (each entry ~1-2KB).
+_vision_cache: OrderedDict[str, VisionAnalysis] = OrderedDict()
+
+# Navigation counter — fast-path: if no navigation happened since
+# the last cache hit, skip hash computation entirely.
+_nav_sequence: int = 0
+_last_cache_hit_nav_seq: int = -1
+_last_cache_result: Optional[VisionAnalysis] = None
 
 
 class VisionDiag(BaseModel):
     """Diagnostics for vision cache behavior."""
     cache_hit: bool = False
-    cache_key: str = ""  # actual key used (frame_hash or visual_hash)
-    cache_key_source: str = ""  # "frame" or "adb" — which hash was used
+    cache_key: str = ""  # perceptual hash of current frame
+    cache_key_source: str = ""  # "perceptual" / "sha256" / "adb"
     cache_age_ms: int = 0  # how old the cached result is (0 if fresh)
     cache_size: int = 0  # total entries in cache
     api_call_ms: int = 0  # time for AI API call (0 if cache hit)
     error: Optional[str] = None
     streamer_running: bool = False
+    # Perceptual hash diagnostics
+    nav_sequence: int = 0  # current nav counter
+    cached_nav_sequence: int = -1  # nav counter when last cache hit occurred
+    hamming_distance: int = -1  # distance to matched cache entry (-1 = not computed)
+    hamming_threshold: int = 0  # configured threshold
+    hash_type: str = ""  # "perceptual" / "sha256" / "adb"
+    invalidation_reason: str = ""  # "cache_hit" / "nav_fast_path" / "screen_changed" / "no_cache"
 
 
 async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnalysis], VisionDiag]:
     """Return cached vision result or run a new analysis.
 
-    Cache key strategy (in order of preference):
-      1. **frame_hash** — SHA-256 of HDMI JPEG bytes.  Always changes
-         when the screen changes, even on NAF-heavy STBs where the
-         accessibility tree is static.
-      2. **adb_visual_hash** — fallback when HDMI streamer is off.
+    Cache strategy (in order):
+      1. **Nav fast-path** — if no navigation since last hit, return cached
+         result without computing any hash (~0ms).
+      2. **Perceptual hash** — dHash of center-cropped HDMI frame.  Scan
+         all cache entries by Hamming distance; hit if ≤ threshold.
+         Recognizes previously-visited screens across time.
+      3. **ADB visual_hash** — fallback when HDMI streamer is off.
 
-    Returns (vision_result, diagnostics).
+    No TTL — entries are valid indefinitely.  LRU eviction at max entries.
     """
-    now = time.time()
-    diag = VisionDiag(cache_size=len(_vision_cache))
+    global _last_cache_hit_nav_seq, _last_cache_result
+
+    threshold = settings.stb_vision_cache_distance
+    max_entries = settings.stb_vision_cache_max
+
+    diag = VisionDiag(
+        cache_size=len(_vision_cache),
+        nav_sequence=_nav_sequence,
+        cached_nav_sequence=_last_cache_hit_nav_seq,
+        hamming_threshold=threshold,
+    )
 
     try:
         from ..video_capture import streamer
@@ -83,7 +106,19 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
     except ImportError:
         diag.streamer_running = False
 
-    # Get HDMI frame (needed for both cache key AND analysis)
+    # ── Fast path: no navigation since last cache hit ──────────────
+    if (
+        _last_cache_result is not None
+        and _nav_sequence == _last_cache_hit_nav_seq
+    ):
+        diag.cache_hit = True
+        diag.invalidation_reason = "nav_fast_path"
+        diag.hash_type = "fast_path"
+        diag.cache_key = "(skipped)"
+        diag.cache_key_source = "nav_counter"
+        return _last_cache_result, diag
+
+    # ── Get HDMI frame ─────────────────────────────────────────────
     frame: Optional[bytes] = None
     if diag.streamer_running:
         try:
@@ -92,34 +127,72 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
         except ImportError:
             pass
 
-    # Determine cache key: prefer frame_hash (pixel-level) over ADB hash
+    # ── Compute cache key ──────────────────────────────────────────
     if frame:
         cache_key = fp.frame_hash(frame)
-        diag.cache_key_source = "frame"
+        if cache_key.startswith("sha256:"):
+            diag.cache_key_source = "sha256"
+            diag.hash_type = "sha256"
+        else:
+            diag.cache_key_source = "perceptual"
+            diag.hash_type = "perceptual"
     else:
         cache_key = adb_visual_hash
         diag.cache_key_source = "adb"
+        diag.hash_type = "adb"
     diag.cache_key = cache_key
 
-    # Check cache
-    if cache_key and cache_key in _vision_cache:
-        ts, cached = _vision_cache[cache_key]
-        if now - ts < _VISION_CACHE_TTL:
-            _vision_cache.move_to_end(cache_key)
-            diag.cache_hit = True
-            diag.cache_age_ms = int((now - ts) * 1000)
-            return cached, diag
-        else:
-            del _vision_cache[cache_key]
+    # ── Nearest-neighbor cache lookup by Hamming distance ──────────
+    if cache_key and _vision_cache:
+        best_distance = 999
+        best_key: Optional[str] = None
+        best_result: Optional[VisionAnalysis] = None
 
-    # Need fresh analysis
+        for cached_key, cached_vision in _vision_cache.items():
+            dist = fp.frame_hash_distance(cache_key, cached_key)
+            if dist < best_distance:
+                best_distance = dist
+                best_key = cached_key
+                best_result = cached_vision
+                if dist == 0:
+                    break  # exact match, no need to scan further
+
+        diag.hamming_distance = best_distance
+
+        if best_distance <= threshold and best_result is not None and best_key is not None:
+            # Cache hit — move to end for LRU
+            _vision_cache.move_to_end(best_key)
+            # Also store under the new key if different (screen captured
+            # from a slightly different angle/compression gets its own entry)
+            if best_key != cache_key:
+                _vision_cache[cache_key] = best_result
+                _vision_cache.move_to_end(cache_key)
+                # Evict if over limit
+                while len(_vision_cache) > max_entries:
+                    _vision_cache.popitem(last=False)
+
+            diag.cache_hit = True
+            diag.invalidation_reason = "cache_hit"
+            diag.cache_size = len(_vision_cache)
+
+            # Update fast-path state
+            _last_cache_hit_nav_seq = _nav_sequence
+            _last_cache_result = best_result
+
+            return best_result, diag
+
+    # ── Cache miss — need fresh analysis ───────────────────────────
     if not diag.streamer_running:
         diag.error = "HDMI streamer not running"
+        diag.invalidation_reason = "no_streamer"
         return None, diag
 
     if frame is None:
         diag.error = "No HDMI frame available"
+        diag.invalidation_reason = "no_frame"
         return None, diag
+
+    diag.invalidation_reason = "screen_changed" if _vision_cache else "no_cache"
 
     try:
         from ..video_capture import analyzer
@@ -141,12 +214,18 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
             tokens_used=result.tokens_used or 0,
         )
 
-        # Store in cache keyed by frame hash
+        # Store in cache
         if cache_key:
-            _vision_cache[cache_key] = (now, vision)
-            if len(_vision_cache) > _VISION_CACHE_MAX:
+            _vision_cache[cache_key] = vision
+            _vision_cache.move_to_end(cache_key)
+            while len(_vision_cache) > max_entries:
                 _vision_cache.popitem(last=False)
+
         diag.cache_size = len(_vision_cache)
+
+        # Update fast-path state
+        _last_cache_hit_nav_seq = _nav_sequence
+        _last_cache_result = vision
 
         return vision, diag
 
@@ -370,6 +449,10 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
     Returns before/after screen state with timing metadata.
     """
     _check_flag()
+
+    # Increment nav counter so vision cache fast-path knows to re-hash
+    global _nav_sequence
+    _nav_sequence += 1
 
     if settings.mock_mode:
         result = await action_executor.navigate_mock(req.action)

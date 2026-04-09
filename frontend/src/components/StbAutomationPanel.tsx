@@ -671,16 +671,34 @@ export default function StbAutomationPanel() {
                           {screenState.state.vision.screen_title && (
                             <span className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">{screenState.state.vision.screen_title}</span>
                           )}
-                          {/* Vision cache diagnostic badge */}
+                          {/* Vision cache diagnostic badges */}
                           {screenState.diag?.vision && (
                             <>
                               <span className={`${badge} ${screenState.diag.vision.cache_hit ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'}`}>
                                 {screenState.diag.vision.cache_hit
-                                  ? `CACHE ${Math.round(screenState.diag.vision.cache_age_ms / 1000)}s ago`
+                                  ? `CACHE`
                                   : `API ${screenState.diag.vision.api_call_ms}ms`}
                               </span>
+                              {/* Hamming distance badge */}
+                              {screenState.diag.vision.hamming_distance >= 0 && (
+                                <span className={`${badge} ${
+                                  screenState.diag.vision.hamming_distance === 0
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                                    : screenState.diag.vision.hamming_distance <= screenState.diag.vision.hamming_threshold
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300'
+                                      : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+                                }`}>
+                                  d={screenState.diag.vision.hamming_distance}
+                                </span>
+                              )}
+                              {/* Invalidation reason badge */}
+                              {screenState.diag.vision.invalidation_reason && (
+                                <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>
+                                  {screenState.diag.vision.invalidation_reason}
+                                </span>
+                              )}
                               <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>
-                                key:{screenState.diag.vision.cache_key_source}
+                                {screenState.diag.vision.hash_type}
                               </span>
                             </>
                           )}
@@ -755,8 +773,15 @@ export default function StbAutomationPanel() {
                             <>
                               <div className="mt-1 border-t border-gray-200 pt-1 dark:border-gray-700">vision:</div>
                               <div>&nbsp; cache_hit: <span className={screenState.diag.vision.cache_hit ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}>{String(screenState.diag.vision.cache_hit)}</span></div>
+                              <div>&nbsp; reason: {screenState.diag.vision.invalidation_reason || '—'}</div>
+                              <div>&nbsp; hash_type: {screenState.diag.vision.hash_type || '—'}</div>
                               <div>&nbsp; cache_key: {screenState.diag.vision.cache_key} <span className="text-gray-400">({screenState.diag.vision.cache_key_source})</span></div>
-                              <div>&nbsp; cache_age_ms: {screenState.diag.vision.cache_age_ms}</div>
+                              <div>&nbsp; hamming_distance: <span className={
+                                screenState.diag.vision.hamming_distance <= screenState.diag.vision.hamming_threshold
+                                  ? 'text-green-600 dark:text-green-400'
+                                  : 'text-red-600 dark:text-red-400'
+                              }>{screenState.diag.vision.hamming_distance}</span> / threshold: {screenState.diag.vision.hamming_threshold}</div>
+                              <div>&nbsp; nav_seq: {screenState.diag.vision.nav_sequence} (cached: {screenState.diag.vision.cached_nav_sequence})</div>
                               <div>&nbsp; cache_size: {screenState.diag.vision.cache_size}</div>
                               <div>&nbsp; api_call_ms: {screenState.diag.vision.api_call_ms}</div>
                               {screenState.diag.vision.error && <div>&nbsp; error: {screenState.diag.vision.error}</div>}

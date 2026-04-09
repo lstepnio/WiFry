@@ -660,6 +660,13 @@ export interface StbVisionDiag {
   api_call_ms: number;
   error: string | null;
   streamer_running: boolean;
+  // Perceptual hash diagnostics
+  nav_sequence: number;
+  cached_nav_sequence: number;
+  hamming_distance: number;
+  hamming_threshold: number;
+  hash_type: string;
+  invalidation_reason: string;
 }
 
 export interface StbScreenStateDiag {

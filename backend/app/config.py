@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     ai_provider: str = "anthropic"  # "anthropic" or "openai"
     ai_model: str = ""  # Empty = provider default (gpt-5.4-mini / claude-sonnet-4-20250514)
 
+    # STB vision cache
+    stb_vision_cache_distance: int = 6  # Hamming distance threshold for perceptual hash matching
+    stb_vision_cache_max: int = 1000  # Max entries in vision LRU cache
+
     # tshark processing
     tshark_concurrency: int = 1   # concurrent tshark queries per pipeline (1 = sequential)
     tshark_nice: int = 10         # nice value for tshark subprocesses
