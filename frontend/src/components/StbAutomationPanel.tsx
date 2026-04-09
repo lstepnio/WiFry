@@ -191,6 +191,8 @@ export default function StbAutomationPanel() {
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionThreshold, setVisionThreshold] = useState(0);
   const [settleTimeoutMs, setSettleTimeoutMs] = useState(3000);
+  const [visionPrompt, setVisionPrompt] = useState('');
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const visionAbortRef = useRef<AbortController | null>(null);
 
   // HDMI stream
@@ -311,7 +313,7 @@ export default function StbAutomationPanel() {
         const controller = new AbortController();
         visionAbortRef.current = controller;
         try {
-          const s = await api.getStbState(selectedSerial, true, true, visionThreshold, controller.signal);
+          const s = await api.getStbState(selectedSerial, true, true, visionThreshold, controller.signal, visionPrompt || undefined);
           if (!controller.signal.aborted) {
             setScreenState(s);
           }
@@ -330,7 +332,7 @@ export default function StbAutomationPanel() {
     if (!selectedSerial) return;
     setLoading(true);
     try {
-      const s = await api.getStbState(selectedSerial, true, visionEnabled, visionEnabled ? visionThreshold : undefined);
+      const s = await api.getStbState(selectedSerial, true, visionEnabled, visionEnabled ? visionThreshold : undefined, undefined, visionPrompt || undefined);
       setScreenState(s);
       setError(null);
     } catch (e) {
@@ -608,6 +610,23 @@ export default function StbAutomationPanel() {
                 />
               </div>
             )}
+            {visionEnabled && (
+              <button
+                onClick={async () => {
+                  if (!showPromptEditor && !visionPrompt) {
+                    try {
+                      const p = await api.getStbVisionPrompt();
+                      setVisionPrompt(p.system_prompt);
+                    } catch { /* use empty = default */ }
+                  }
+                  setShowPromptEditor(!showPromptEditor);
+                }}
+                className="rounded border border-gray-300 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800"
+                title="Edit the system prompt sent to the AI vision model"
+              >
+                Prompt
+              </button>
+            )}
             <div className="flex items-center gap-1.5">
               <label className="text-[10px] text-gray-500 dark:text-gray-400" title="Maximum time (ms) to wait for the screen to settle after a key press.&#10;&#10;Lower = faster navigation but may miss slow transitions.&#10;Higher = more reliable transition detection but slower.&#10;&#10;Suggested values:&#10;  200-500 = fast (with vision + logcat active)&#10;  1000 = balanced&#10;  3000 = conservative (default)&#10;  5000 = very slow STBs">
                 Settle
@@ -632,6 +651,34 @@ export default function StbAutomationPanel() {
                 </span>
               </span>
             )}
+          </div>
+        )}
+
+        {/* Vision prompt editor */}
+        {showPromptEditor && visionEnabled && (
+          <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800/50">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">Vision System Prompt</span>
+              <button
+                onClick={() => {
+                  setVisionPrompt('');
+                  api.getStbVisionPrompt().then(p => setVisionPrompt(p.system_prompt)).catch(() => {});
+                }}
+                className="text-[10px] text-blue-500 hover:text-blue-700 dark:text-blue-400"
+              >
+                Reset to default
+              </button>
+            </div>
+            <textarea
+              value={visionPrompt}
+              onChange={e => setVisionPrompt(e.target.value)}
+              rows={6}
+              className="w-full rounded border border-gray-300 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300"
+              placeholder="Loading default prompt..."
+            />
+            <div className="mt-1 text-[9px] text-gray-400 dark:text-gray-500">
+              Changes take effect on next vision API call (cache misses only). Clear the vision cache to force a re-analysis.
+            </div>
           </div>
         )}
 

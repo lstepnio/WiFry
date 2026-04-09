@@ -161,6 +161,7 @@ async def _run_vision_analysis(
     cache_key: Optional[str],
     diag: VisionDiag,
     adb_visual_hash: str = "",
+    system_prompt: Optional[str] = None,
 ) -> tuple[Optional[VisionAnalysis], VisionDiag]:
     """Run AI vision analysis on cache miss.
 
@@ -204,7 +205,10 @@ async def _run_vision_analysis(
         from ..video_capture import analyzer
 
         t0 = time.time()
-        result = await analyzer.analyze_frame(frame_jpeg=frame)
+        result = await analyzer.analyze_frame(
+            frame_jpeg=frame,
+            system_prompt=system_prompt,
+        )
         diag.api_call_ms = int((time.time() - t0) * 1000)
 
         vision_obj = VisionAnalysis(
@@ -312,6 +316,7 @@ async def get_state(
     include_hierarchy: bool = Query(True, description="Include uiautomator dump"),
     include_vision: bool = Query(False, description="Include AI vision analysis of HDMI frame"),
     vision_threshold: Optional[int] = Query(None, ge=0, le=50, description="Override Hamming distance threshold for vision cache (0=exact match only, default from config)"),
+    vision_prompt: Optional[str] = Query(None, description="Override the default vision system prompt"),
 ) -> ScreenStateResponse:
     """STB_AUTOMATION — Read the current screen state via ADB + optional vision.
 
@@ -391,6 +396,7 @@ async def get_state(
             frame=frame,
             cache_key=cache_key,
             diag=vision_diag,
+            system_prompt=vision_prompt,
         )
 
         (state, timings), (vision, vision_diag) = await asyncio.gather(
@@ -703,6 +709,15 @@ class VisionCacheDebug(BaseModel):
     misses_total: int = 0
     hit_ratio_pct: float = 0.0
     entries: List[VisionCacheEntry] = []
+
+
+@router.get("/vision/prompt")
+async def get_vision_prompt() -> dict:
+    """STB_AUTOMATION — Get the default vision prompts for editing."""
+    _check_flag()
+    from ..video_capture import analyzer
+    sys_prompt, usr_prompt = analyzer.get_default_prompts()
+    return {"system_prompt": sys_prompt, "user_prompt": usr_prompt}
 
 
 @router.get("/vision/cache")
