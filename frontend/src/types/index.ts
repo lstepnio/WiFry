@@ -826,6 +826,29 @@ export interface UIMapResponse {
   stats: UIMapStats;
 }
 
+export interface UIMapGraphNode {
+  id: string;
+  label: string;
+  screen_key: string;
+  screen_type?: string;
+}
+
+export interface UIMapGraphEdge {
+  from: string;
+  to: string;
+  action: string;
+  confidence: number;
+  observations: number;
+  screen_key: string;
+}
+
+export interface UIMapGraph {
+  nodes: UIMapGraphNode[];
+  edges: UIMapGraphEdge[];
+  screens: string[];
+  stats: UIMapStats;
+}
+
 export interface StbTransitionEdge {
   from_node: string;
   to_node: string;

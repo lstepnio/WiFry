@@ -924,6 +924,54 @@ async def get_ui_map_screen(screen_key: str = Query(...)) -> dict:
     }
 
 
+@router.get("/ui-map/graph")
+async def get_ui_map_graph() -> dict:
+    """STB_AUTOMATION — Get the full UI map as a graph (nodes + edges)."""
+    _check_flag()
+    all_screens = ui_map.get_all_screens()
+    nodes = []  # unique focused elements across all screens
+    edges = []  # transitions
+    node_set: set = set()
+
+    for screen_summary in all_screens:
+        screen_key = screen_summary["screen_key"]
+        entries = ui_map.get_screen_entries(screen_key)
+        for entry in entries:
+            # Create node IDs that include screen context
+            from_id = f"{screen_key}::{entry.from_focused}"
+            to_id = f"{screen_key}::{entry.to_focused}"
+            if from_id not in node_set:
+                node_set.add(from_id)
+                nodes.append({
+                    "id": from_id,
+                    "label": entry.from_focused,
+                    "screen_key": screen_key,
+                })
+            if to_id not in node_set:
+                node_set.add(to_id)
+                nodes.append({
+                    "id": to_id,
+                    "label": entry.to_focused,
+                    "screen_key": screen_key,
+                    "screen_type": entry.to_screen_type,
+                })
+            edges.append({
+                "from": from_id,
+                "to": to_id,
+                "action": entry.action,
+                "confidence": entry.confidence,
+                "observations": entry.observation_count,
+                "screen_key": screen_key,
+            })
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "screens": [s["screen_key"] for s in all_screens],
+        "stats": ui_map.stats(),
+    }
+
+
 @router.get("/ui-map/stats")
 async def get_ui_map_stats() -> dict:
     """STB_AUTOMATION — Get UI map prediction statistics."""

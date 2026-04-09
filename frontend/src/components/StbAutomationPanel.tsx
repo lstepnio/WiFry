@@ -1224,23 +1224,43 @@ export default function StbAutomationPanel() {
               c >= 0.8 ? 'text-green-600 dark:text-green-400' :
               c >= 0.5 ? 'text-amber-600 dark:text-amber-400' :
               'text-red-600 dark:text-red-400';
+            const confStroke = (c: number) =>
+              c >= 0.8 ? '#22c55e' : c >= 0.5 ? '#f59e0b' : '#ef4444';
+            const actionColor: Record<string, string> = {
+              up: '#818cf8', down: '#818cf8', left: '#60a5fa', right: '#60a5fa',
+              enter: '#34d399', back: '#fb923c', home: '#f472b6', menu: '#a78bfa',
+            };
 
             const loadMap = async () => {
               setMapLoading(true);
               try { setMapData(await api.getUIMap()); } catch { /* ignore */ }
               setMapLoading(false);
             };
-
             const loadScreen = async (screenKey: string) => {
               setMapSelectedScreen(screenKey);
-              try {
-                const data = await api.getUIMapScreen(screenKey);
-                setMapScreenEntries(data.entries);
-              } catch { /* ignore */ }
+              try { setMapScreenEntries((await api.getUIMapScreen(screenKey)).entries); } catch { /* ignore */ }
             };
-
-            // Auto-load if empty
             if (!mapData && !mapLoading) { loadMap(); }
+
+            // Build graph nodes/edges from screen entries for SVG visualization
+            const graphNodes: Array<{ id: string; label: string; x: number; y: number }> = [];
+            const graphEdges: Array<{ from: string; to: string; action: string; confidence: number; observations: number }> = [];
+            if (mapScreenEntries.length > 0) {
+              const nodeSet = new Map<string, { id: string; label: string }>();
+              for (const e of mapScreenEntries) {
+                if (!nodeSet.has(e.from_focused)) nodeSet.set(e.from_focused, { id: e.from_focused, label: e.from_focused });
+                if (!nodeSet.has(e.to_focused)) nodeSet.set(e.to_focused, { id: e.to_focused, label: e.to_focused });
+                graphEdges.push({ from: e.from_focused, to: e.to_focused, action: e.action, confidence: e.confidence, observations: e.observation_count });
+              }
+              // Circular layout
+              const nodeArr = Array.from(nodeSet.values());
+              const cx = 300, cy = 200, r = Math.min(150, 40 * nodeArr.length);
+              nodeArr.forEach((n, i) => {
+                const angle = (2 * Math.PI * i) / nodeArr.length - Math.PI / 2;
+                graphNodes.push({ ...n, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+              });
+            }
+            const nodePos = new Map(graphNodes.map(n => [n.id, { x: n.x, y: n.y }]));
 
             return (
               <div className="space-y-4">
@@ -1252,7 +1272,7 @@ export default function StbAutomationPanel() {
                       <button onClick={loadMap} disabled={mapLoading} className={`${btnGhost} py-1 text-xs`}>
                         {mapLoading ? 'Loading...' : 'Refresh'}
                       </button>
-                      <button onClick={async () => { await api.clearUIMap(); setMapSelectedScreen(null); setMapScreenEntries([]); loadMap(); }} className={`${btnDanger} py-1 text-xs`}>
+                      <button onClick={async () => { await api.clearUIMap(); setMapSelectedScreen(null); setMapScreenEntries([]); setMapData(null); loadMap(); }} className={`${btnDanger} py-1 text-xs`}>
                         Clear
                       </button>
                     </div>
@@ -1276,11 +1296,8 @@ export default function StbAutomationPanel() {
                     <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">Learned Screens</h4>
                     <div className="space-y-1">
                       {mapData.screens.map(s => (
-                        <button
-                          key={s.screen_key}
-                          onClick={() => loadScreen(s.screen_key)}
-                          className={`w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${mapSelectedScreen === s.screen_key ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
-                        >
+                        <button key={s.screen_key} onClick={() => loadScreen(s.screen_key)}
+                          className={`w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${mapSelectedScreen === s.screen_key ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
                           <div className="flex items-center justify-between">
                             <span className="font-mono text-[10px] text-gray-600 dark:text-gray-400">{s.screen_key}</span>
                             <div className="flex gap-2">
@@ -1302,7 +1319,81 @@ export default function StbAutomationPanel() {
                   </div>
                 )}
 
-                {/* Screen detail — transitions table */}
+                {/* Graph visualization */}
+                {graphNodes.length > 0 && (
+                  <div className={card}>
+                    <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                      Navigation Graph: <span className="font-mono text-[10px]">{mapSelectedScreen}</span>
+                    </h4>
+                    <svg viewBox="0 0 600 400" className="w-full rounded border border-gray-200 bg-gray-950 dark:border-gray-700" style={{ minHeight: 300 }}>
+                      <defs>
+                        {graphEdges.map((e, i) => (
+                          <marker key={`arrow-${i}`} id={`arrow-${i}`} markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                            <path d="M0,0 L8,3 L0,6" fill={confStroke(e.confidence)} fillOpacity="0.7" />
+                          </marker>
+                        ))}
+                      </defs>
+                      {/* Edges */}
+                      {graphEdges.map((e, i) => {
+                        const from = nodePos.get(e.from);
+                        const to = nodePos.get(e.to);
+                        if (!from || !to) return null;
+                        // Self-loop
+                        if (e.from === e.to) {
+                          return (
+                            <g key={`edge-${i}`}>
+                              <path d={`M${from.x},${from.y - 20} C${from.x - 40},${from.y - 60} ${from.x + 40},${from.y - 60} ${from.x},${from.y - 20}`}
+                                fill="none" stroke={confStroke(e.confidence)} strokeWidth={Math.max(1, Math.min(3, e.observations))} strokeOpacity="0.6" markerEnd={`url(#arrow-${i})`} />
+                            </g>
+                          );
+                        }
+                        // Offset for parallel edges (same pair, different direction)
+                        const dx = to.x - from.x, dy = to.y - from.y;
+                        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const nx = -dy / len * 8, ny = dx / len * 8;
+                        // Shorten to avoid overlapping nodes
+                        const shorten = 24;
+                        const sx = from.x + (dx / len) * shorten + nx;
+                        const sy = from.y + (dy / len) * shorten + ny;
+                        const ex = to.x - (dx / len) * shorten + nx;
+                        const ey = to.y - (dy / len) * shorten + ny;
+                        const mx = (sx + ex) / 2 + nx, my = (sy + ey) / 2 + ny;
+                        return (
+                          <g key={`edge-${i}`}>
+                            <path d={`M${sx},${sy} Q${mx},${my} ${ex},${ey}`}
+                              fill="none" stroke={confStroke(e.confidence)} strokeWidth={Math.max(1, Math.min(3, e.observations))}
+                              strokeOpacity="0.6" markerEnd={`url(#arrow-${i})`} />
+                            <text x={mx} y={my - 4} textAnchor="middle" fontSize="8" fill={actionColor[e.action] || '#94a3b8'} fillOpacity="0.9">
+                              {e.action} ({Math.round(e.confidence * 100)}%)
+                            </text>
+                          </g>
+                        );
+                      })}
+                      {/* Nodes */}
+                      {graphNodes.map(n => (
+                        <g key={n.id}>
+                          <circle cx={n.x} cy={n.y} r="20" fill="#1e293b" stroke="#475569" strokeWidth="1.5" />
+                          <text x={n.x} y={n.y + 1} textAnchor="middle" dominantBaseline="middle"
+                            fontSize="7" fill="#e2e8f0" fontWeight="500">
+                            {n.label.length > 14 ? n.label.slice(0, 13) + '…' : n.label}
+                          </text>
+                        </g>
+                      ))}
+                      {/* Legend */}
+                      <g transform="translate(10, 370)">
+                        <rect x="0" y="-6" width="8" height="8" rx="1" fill="#22c55e" />
+                        <text x="12" y="1" fontSize="7" fill="#94a3b8">≥80%</text>
+                        <rect x="45" y="-6" width="8" height="8" rx="1" fill="#f59e0b" />
+                        <text x="57" y="1" fontSize="7" fill="#94a3b8">≥50%</text>
+                        <rect x="90" y="-6" width="8" height="8" rx="1" fill="#ef4444" />
+                        <text x="102" y="1" fontSize="7" fill="#94a3b8">&lt;50%</text>
+                        <text x="140" y="1" fontSize="7" fill="#64748b">Edge color = confidence</text>
+                      </g>
+                    </svg>
+                  </div>
+                )}
+
+                {/* Transitions table */}
                 {mapSelectedScreen && mapScreenEntries.length > 0 && (
                   <div className={card}>
                     <h4 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
