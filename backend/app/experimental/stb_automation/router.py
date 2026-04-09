@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nl_runner, screen_reader, test_flows, vision_cache, vision_map
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, navigator, nl_runner, screen_reader, test_flows, vision_cache, vision_map
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
 from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
@@ -735,6 +735,53 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
         settle_method=result.settle_method,
         settle_ms=round(result.settle_ms, 1),
         timing=result.timing,
+    )
+
+
+# ── Non-fragile Navigation ─────────────────────────────────────────
+
+
+class NavigateToElementRequest(BaseModel):
+    serial: str
+    target_element: str
+    screen_key: Optional[str] = None
+    settle_timeout_ms: int = 1000
+
+
+@router.post("/navigate-to-element")
+async def navigate_to_element(req: NavigateToElementRequest) -> dict:
+    """STB_AUTOMATION — Navigate to a specific UI element by name.
+
+    Uses the vision map to find the action sequence, then executes
+    and verifies each step via vision. No key-press counting.
+    """
+    _check_flag()
+    return await navigator.navigate_to_element(
+        serial=req.serial,
+        target_element=req.target_element,
+        screen_key=req.screen_key,
+        settle_timeout_ms=req.settle_timeout_ms,
+    )
+
+
+class NavigateToScreenRequest(BaseModel):
+    serial: str
+    target_screen_key: str
+    settle_timeout_ms: int = 1000
+
+
+@router.post("/navigate-to-screen")
+async def navigate_to_screen(req: NavigateToScreenRequest) -> dict:
+    """STB_AUTOMATION — Navigate to a specific screen by identity.
+
+    Uses cross-screen pathfinding via the vision map. For each hop,
+    navigates to the required element and presses enter.
+    """
+    _check_flag()
+    return await navigator.navigate_to_screen(
+        serial=req.serial,
+        target_screen_key=req.target_screen_key,
+        settle_timeout_ms=req.settle_timeout_ms,
     )
 
 
