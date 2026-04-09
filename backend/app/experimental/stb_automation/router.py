@@ -444,15 +444,63 @@ async def get_state(
         _map_screen_key = f"{state.package}/{state.activity}"
         _map_from_focused = ui_map.get_last_focused(_map_screen_key)
 
-        # Attempt prediction (only used if map_enabled query param not False)
+        # Attempt prediction
         map_prediction = ui_map.predict(
             screen_key=_map_screen_key,
             action=_map_action,
             from_focused=_map_from_focused,
         ) if _map_action and _map_from_focused else None
 
-        # ── CACHE MISS: AI vision call ────────────────────────────
-        # Run AI analysis to get ground truth (also validates predictions)
+        # ── MAP HIT: use prediction, skip AI call entirely ────────
+        if map_prediction is not None:
+            predicted_vision = VisionAnalysis(
+                screen_type=map_prediction.to_screen_type,
+                screen_title=map_prediction.to_screen_title,
+                focused_label=map_prediction.to_focused,
+                focused_position=map_prediction.to_focused_position,
+                focused_confidence=map_prediction.to_focused_confidence,
+                navigation_path=map_prediction.to_navigation_path,
+                provider="ui_map",
+                tokens_used=0,
+            )
+            state.vision = predicted_vision
+            _enrich_focused_context(state, predicted_vision)
+            ui_map.set_last_focused(_map_screen_key, map_prediction.to_focused)
+
+            # Record as observation (reinforces confidence)
+            ui_map.observe(
+                screen_key=_map_screen_key,
+                action=_map_action,
+                from_focused=_map_from_focused,
+                to_focused=map_prediction.to_focused,
+                to_screen_type=map_prediction.to_screen_type,
+                to_screen_title=map_prediction.to_screen_title,
+                to_focused_position=map_prediction.to_focused_position,
+                to_focused_confidence=map_prediction.to_focused_confidence,
+                to_navigation_path=map_prediction.to_navigation_path,
+            )
+
+            stable_fp = fp.fingerprint_from_activity(state.package, state.activity)
+            diag = _build_diag(state, stable_fp, "", timings)
+            diag.frame_hash_ms = frame_hash_ms
+            diag.vision = vision_diag
+            map_diag = UIMapDiag(
+                screen_key=_map_screen_key,
+                last_action=_map_action,
+                from_focused=_map_from_focused,
+                to_focused=map_prediction.to_focused,
+                observation_recorded=True,
+                prediction_available=True,
+                prediction_confidence=map_prediction.confidence,
+                prediction_observations=map_prediction.observation_count,
+                map_entries_for_screen=len(ui_map.get_screen_entries(_map_screen_key)),
+            )
+            diag.ui_map = map_diag
+            diag.total_ms = int((time.time() - t0) * 1000)
+            diag.read_ms = diag.total_ms
+            return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
+
+        # ── CACHE MISS + NO MAP: AI vision call ──────────────────
         vision_task = _run_vision_analysis(
             frame=frame,
             cache_key=cache_key,
@@ -472,10 +520,6 @@ async def get_state(
             from_focused=_map_from_focused,
             map_entries_for_screen=len(ui_map.get_screen_entries(_map_screen_key)),
         )
-        if map_prediction:
-            map_diag.prediction_available = True
-            map_diag.prediction_confidence = map_prediction.confidence
-            map_diag.prediction_observations = map_prediction.observation_count
 
         if vision:
             state.vision = vision
@@ -504,17 +548,9 @@ async def get_state(
                     else ""
                 )
 
-            # Validate prediction if we had one
-            if map_prediction and vision.focused_label:
-                ui_map.validate(
-                    screen_key=_map_screen_key,
-                    action=_map_action,
-                    from_focused=_map_from_focused,
-                    actual_focused=vision.focused_label,
-                )
-
             # Update last focused for next prediction
-            ui_map.set_last_focused(_map_screen_key, vision.focused_label)
+            if vision.focused_label:
+                ui_map.set_last_focused(_map_screen_key, vision.focused_label)
 
         diag.ui_map = map_diag
         diag.total_ms = int((time.time() - t0) * 1000)
