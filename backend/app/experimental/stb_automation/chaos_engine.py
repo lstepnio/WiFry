@@ -18,9 +18,13 @@ from typing import Optional, Set
 from . import action_executor, diagnostics, fingerprint as fp, nav_model, screen_reader
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
-from .models import ChaosConfig, ChaosResult, DetectedAnomaly
+from .models import ChaosConfig, ChaosResult, DetectedAnomaly, VisionAnalysis
 
 logger = logging.getLogger("wifry.stb_automation.chaos_engine")
+
+# Track consecutive vision results for diff-based anomaly detection
+_last_vision: Optional[VisionAnalysis] = None
+_stuck_vision_count: int = 0  # consecutive identical vision results
 
 # Default key weights — bias toward navigation, avoid home
 DEFAULT_KEY_WEIGHTS = {
@@ -90,9 +94,13 @@ async def stop_chaos() -> Optional[ChaosResult]:
 
 async def _chaos_loop(config: ChaosConfig, seed: int) -> None:
     """Main chaos exploration loop."""
-    global _chaos_result
+    global _chaos_result, _last_vision, _stuck_vision_count
     if _chaos_result is None:
         return
+
+    # Reset vision diff state for this session
+    _last_vision = None
+    _stuck_vision_count = 0
 
     rng = random.Random(seed)
     monitor = get_monitor()
@@ -180,7 +188,18 @@ async def _chaos_loop(config: ChaosConfig, seed: int) -> None:
 
 
 async def _vision_check(serial: str, result: ChaosResult) -> None:
-    """Run a vision anomaly check via HDMI capture (if available)."""
+    """Run a vision anomaly check via HDMI capture.
+
+    Detects three categories of vision anomalies:
+      1. **Error screen** — AI identifies an error/crash dialog
+      2. **Stuck UI** — Same screen_type + focused_label for 3+ consecutive
+         checks despite key presses being sent (UI is frozen)
+      3. **Focus lost** — Vision cannot identify any focused element
+         (confidence=low or empty label) which may indicate an overlay
+         or unexpected state
+    """
+    global _last_vision, _stuck_vision_count
+
     try:
         from ..video_capture import analyzer, streamer
 
@@ -195,18 +214,81 @@ async def _vision_check(serial: str, result: ChaosResult) -> None:
         if analysis.error:
             return
 
-        # Check for error screens
-        if analysis.screen_type == "error":
-            anomaly = DetectedAnomaly(
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build a VisionAnalysis from the FrameAnalysisResult for comparison
+        current = VisionAnalysis(
+            screen_type=analysis.screen_type or "unknown",
+            screen_title=analysis.screen_title or "",
+            focused_label=analysis.focused_element.label if analysis.focused_element else "",
+            focused_position=analysis.focused_element.position if analysis.focused_element else "",
+            focused_confidence=analysis.focused_element.confidence if analysis.focused_element else "low",
+            navigation_path=analysis.navigation_path or [],
+            visible_text=analysis.visible_text_summary or "",
+            raw_description=analysis.raw_description or "",
+            provider=analysis.provider or "",
+            tokens_used=analysis.tokens_used or 0,
+        )
+
+        # ── Check 1: Error screen ─────────────────────────────────
+        if current.screen_type == "error":
+            result.anomalies.append(DetectedAnomaly(
                 pattern_name="vision_error_screen",
                 severity="high",
                 category="ui",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                vision_state=analysis.screen_type,
-                context_lines=[analysis.raw_description[:200]],
-            )
-            result.anomalies.append(anomaly)
+                timestamp=now,
+                vision_state=current.screen_type,
+                context_lines=[current.raw_description[:200]],
+            ))
             logger.warning("[STB_AUTOMATION] Vision detected error screen during chaos")
 
-    except (ImportError, Exception) as e:
-        logger.debug("[STB_AUTOMATION] Vision check not available: %s", e)
+        # ── Check 2: Stuck UI (same screen for 3+ consecutive checks) ─
+        if _last_vision is not None:
+            same_screen = (
+                current.screen_type == _last_vision.screen_type
+                and current.focused_label == _last_vision.focused_label
+            )
+            if same_screen:
+                _stuck_vision_count += 1
+            else:
+                _stuck_vision_count = 0
+
+            if _stuck_vision_count >= 3:
+                result.anomalies.append(DetectedAnomaly(
+                    pattern_name="vision_stuck_ui",
+                    severity="medium",
+                    category="ui",
+                    timestamp=now,
+                    vision_state=f"{current.screen_type}:{current.focused_label}",
+                    context_lines=[
+                        f"UI unchanged for {_stuck_vision_count} consecutive vision checks",
+                        f"screen_type={current.screen_type}, focused={current.focused_label}",
+                    ],
+                ))
+                logger.warning(
+                    "[STB_AUTOMATION] Vision detected stuck UI: %s/%s for %d checks",
+                    current.screen_type, current.focused_label, _stuck_vision_count,
+                )
+                _stuck_vision_count = 0  # Reset after reporting
+
+        # ── Check 3: Focus lost ────────────────────────────────────
+        if not current.focused_label and current.focused_confidence == "low":
+            result.anomalies.append(DetectedAnomaly(
+                pattern_name="vision_focus_lost",
+                severity="low",
+                category="ui",
+                timestamp=now,
+                vision_state=current.screen_type,
+                context_lines=[
+                    "Vision cannot identify any focused element",
+                    f"screen_type={current.screen_type}, visible_text={current.visible_text[:100]}",
+                ],
+            ))
+            logger.info("[STB_AUTOMATION] Vision: no focused element detected")
+
+        _last_vision = current
+
+    except ImportError:
+        logger.debug("[STB_AUTOMATION] Vision check not available: video_capture module missing")
+    except Exception as e:
+        logger.debug("[STB_AUTOMATION] Vision check failed: %s", e)

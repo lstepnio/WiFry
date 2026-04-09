@@ -17,6 +17,7 @@ Phase 1D endpoints:
 All endpoints return 404 if the feature flag is disabled.
 """
 
+import asyncio
 import logging
 import time
 from collections import OrderedDict
@@ -410,27 +411,31 @@ async def get_state(
             diag.read_ms = diag.total_ms
             return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
 
-        # ── CACHE MISS: full ADB + AI API call ────────────────────
+        # ── CACHE MISS: ADB + AI API call IN PARALLEL ─────────────
+        # The AI vision call and ADB reads are independent — overlap them
+        # to shave 200-400ms off the cold path.
         monitor = get_monitor()
         recent = monitor.get_events(last_n=5) if monitor.is_active else []
-        state, timings = await screen_reader.read_screen_state(
+
+        adb_task = screen_reader.read_screen_state(
             serial=serial,
             recent_events=recent,
             include_hierarchy=include_hierarchy,
+        )
+        vision_task = _run_vision_analysis(
+            frame=frame,
+            cache_key=cache_key,
+            diag=vision_diag,
+        )
+
+        (state, timings), (vision, vision_diag) = await asyncio.gather(
+            adb_task, vision_task,
         )
 
         stable_fp = fp.fingerprint(state)
         volatile_vh = fp.visual_hash(state)
         diag = _build_diag(state, stable_fp, volatile_vh, timings)
         diag.frame_hash_ms = frame_hash_ms
-
-        # Run the AI analysis (frame and cache_key from the earlier check)
-        vision, vision_diag = await _run_vision_analysis(
-            frame=frame,
-            cache_key=cache_key,
-            diag=vision_diag,
-            adb_visual_hash=volatile_vh,
-        )
         diag.vision = vision_diag
         if vision:
             state.vision = vision

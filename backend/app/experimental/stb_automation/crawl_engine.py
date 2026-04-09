@@ -311,13 +311,30 @@ async def _navigate_to(
 
 
 def _state_to_node(state: ScreenState, node_id: str) -> ScreenNode:
-    """Convert a ScreenState into a ScreenNode."""
+    """Convert a ScreenState into a ScreenNode.
+
+    When vision analysis is available (from AI vision cache), enrich the
+    node with screen_type, title, and the full vision_analysis dict.
+    This gives NAF STBs meaningful screen labels in the navigation graph.
+    """
+    screen_type = "unknown"
+    title = ""
+    vision_analysis = None
+
+    if state.vision:
+        screen_type = state.vision.screen_type or "unknown"
+        title = state.vision.screen_title or state.vision.focused_label or ""
+        vision_analysis = state.vision.model_dump()
+
     return ScreenNode(
         id=node_id,
         fingerprint=node_id,
+        screen_type=screen_type,
+        title=title,
         package=state.package,
         activity=state.activity,
         elements=state.ui_elements,
+        vision_analysis=vision_analysis,
         last_visited=datetime.now(timezone.utc).isoformat(),
     )
 

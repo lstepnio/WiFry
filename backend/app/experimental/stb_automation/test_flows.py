@@ -283,39 +283,65 @@ async def _replay_loop(flow: TestFlow) -> None:
             if step.wait_ms > 0:
                 await asyncio.sleep(step.wait_ms / 1000.0)
 
-            # Check assertion if set
+            # ── Assertions ──────────────────────────────────────────
+            step_failed = False
             post_fp = fp.fingerprint(result.post_state)
+
+            # ADB-based assertions (fingerprint / activity)
             if step.expected_screen_id and post_fp != step.expected_screen_id:
-                # Also check activity-only fingerprint for looser match
                 act_fp = fp.fingerprint_from_activity(
                     result.post_state.package, result.post_state.activity,
                 )
                 if step.expected_activity and result.post_state.activity != step.expected_activity:
-                    _active_run.steps_failed += 1
+                    step_failed = True
                     logger.warning(
-                        "[STB_AUTOMATION] Flow step %d assertion failed: expected %s, got %s",
-                        i, step.expected_screen_id[:8], post_fp[:8],
+                        "[STB_AUTOMATION] Flow step %d assertion failed: expected activity %s, got %s",
+                        i, step.expected_activity, result.post_state.activity,
                     )
-                    if step.collect_diagnostics:
-                        await diagnostics.collect_diagnostics(
-                            serial=flow.serial,
-                            reason="flow_assertion_failed",
-                            severity="medium",
-                        )
-                    continue
                 elif act_fp != step.expected_screen_id:
-                    _active_run.steps_failed += 1
+                    step_failed = True
                     logger.warning(
-                        "[STB_AUTOMATION] Flow step %d assertion failed: expected %s, got %s",
+                        "[STB_AUTOMATION] Flow step %d assertion failed: expected fp %s, got %s",
                         i, step.expected_screen_id[:8], post_fp[:8],
                     )
-                    if step.collect_diagnostics:
-                        await diagnostics.collect_diagnostics(
-                            serial=flow.serial,
-                            reason="flow_assertion_failed",
-                            severity="medium",
-                        )
-                    continue
+
+            # Vision-based assertions (work on NAF STBs)
+            vision = result.post_state.vision
+            if step.expected_screen_type and not step_failed:
+                if not vision:
+                    logger.warning(
+                        "[STB_AUTOMATION] Flow step %d: vision assertion skipped (no vision data)",
+                        i,
+                    )
+                elif vision.screen_type != step.expected_screen_type:
+                    step_failed = True
+                    logger.warning(
+                        "[STB_AUTOMATION] Flow step %d vision assertion failed: expected screen_type=%s, got %s",
+                        i, step.expected_screen_type, vision.screen_type,
+                    )
+
+            if step.expected_focused_label and not step_failed:
+                if not vision:
+                    logger.warning(
+                        "[STB_AUTOMATION] Flow step %d: vision assertion skipped (no vision data)",
+                        i,
+                    )
+                elif vision.focused_label.lower() != step.expected_focused_label.lower():
+                    step_failed = True
+                    logger.warning(
+                        "[STB_AUTOMATION] Flow step %d vision assertion failed: expected focused=%s, got %s",
+                        i, step.expected_focused_label, vision.focused_label,
+                    )
+
+            if step_failed:
+                _active_run.steps_failed += 1
+                if step.collect_diagnostics:
+                    await diagnostics.collect_diagnostics(
+                        serial=flow.serial,
+                        reason="flow_assertion_failed",
+                        severity="medium",
+                    )
+                continue
 
             _active_run.steps_passed += 1
 
