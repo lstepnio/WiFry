@@ -10,9 +10,12 @@ Reads the current STB screen state using multiple signal sources:
 All ADB interactions go through ``adb_manager`` — no raw subprocess calls.
 """
 
+import asyncio
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -22,10 +25,23 @@ from .models import LogcatEvent, ScreenState, UIElement
 logger = logging.getLogger("wifry.stb_automation.screen_reader")
 
 
+@dataclass
+class ReadTimings:
+    """Per-stage timing breakdown for screen state reads."""
+    foreground_ms: int = 0
+    hierarchy_ms: int = 0
+    fragments_ms: int = 0
+    window_title_ms: int = 0
+    total_ms: int = 0
+
+
 # ── Foreground activity via dumpsys ─────────────────────────────────
 
 
-async def read_foreground_activity(serial: str) -> tuple[str, str]:
+async def read_foreground_activity(
+    serial: str,
+    window_dumpsys_output: Optional[str] = None,
+) -> tuple[str, str]:
     """Return (package, activity) of the foreground window.
 
     Tries multiple dumpsys sources because STBs vary widely:
@@ -34,12 +50,24 @@ async def read_foreground_activity(serial: str) -> tuple[str, str]:
       3. ``dumpsys activity activities`` — fallback via ActivityManager
 
     Falls back to empty strings on parse failure.
+
+    Parameters
+    ----------
+    window_dumpsys_output:
+        Pre-fetched ``dumpsys window displays`` output to avoid redundant
+        ADB calls.  When provided, the first ADB command is skipped.
     """
-    # Try dumpsys window displays first (works on most Android TV STBs)
-    result = await adb_manager.shell(serial, "dumpsys window displays")
-    pkg, act = _parse_foreground(result.stdout)
-    if pkg:
-        return pkg, act
+    # Try pre-fetched output first (if provided)
+    if window_dumpsys_output is not None:
+        pkg, act = _parse_foreground(window_dumpsys_output)
+        if pkg:
+            return pkg, act
+    else:
+        # Try dumpsys window displays first (works on most Android TV STBs)
+        result = await adb_manager.shell(serial, "dumpsys window displays")
+        pkg, act = _parse_foreground(result.stdout)
+        if pkg:
+            return pkg, act
 
     # Try dumpsys window windows (standard AOSP)
     result = await adb_manager.shell(serial, "dumpsys window windows")
@@ -86,17 +114,32 @@ def _parse_activity_dumpsys(activity_output: str) -> tuple[str, str]:
 # ── Window title via dumpsys window ────────────────────────────────
 
 
-async def read_window_title(serial: str) -> str:
+async def read_window_title(
+    serial: str,
+    window_dumpsys_output: Optional[str] = None,
+) -> str:
     """Extract the window title from dumpsys window.
 
     Parses ``mCurrentFocus`` and ``mFocusedWindow`` for the window
     title string.  On Android TV STBs, this often contains the app's
     declared label or a meaningful screen name.
+
+    Parameters
+    ----------
+    window_dumpsys_output:
+        Pre-fetched ``dumpsys window displays`` output to avoid redundant
+        ADB calls.  When provided, the first ADB command is skipped.
     """
-    result = await adb_manager.shell(serial, "dumpsys window displays")
-    title = _parse_window_title(result.stdout)
-    if title:
-        return title
+    # Try pre-fetched output first (if provided)
+    if window_dumpsys_output is not None:
+        title = _parse_window_title(window_dumpsys_output)
+        if title:
+            return title
+    else:
+        result = await adb_manager.shell(serial, "dumpsys window displays")
+        title = _parse_window_title(result.stdout)
+        if title:
+            return title
 
     result = await adb_manager.shell(serial, "dumpsys window windows")
     return _parse_window_title(result.stdout)
@@ -520,7 +563,7 @@ async def read_screen_state(
     serial: str,
     recent_events: Optional[List[LogcatEvent]] = None,
     include_hierarchy: bool = True,
-) -> ScreenState:
+) -> tuple[ScreenState, ReadTimings]:
     """Read the full screen state from ADB.
 
     Combines five signal sources for maximum context:
@@ -530,17 +573,28 @@ async def read_screen_state(
       4. dumpsys window → window title
       5. logcat events (passed in)
 
-    Parameters
-    ----------
-    serial:
-        ADB device serial (e.g. ``192.168.1.50:5555``).
-    recent_events:
-        Optional logcat events to attach for context.
-    include_hierarchy:
-        If False, skip the (slower) uiautomator dump and only read
-        the foreground activity via dumpsys.
+    Independent ADB calls are parallelized via ``asyncio.gather()``.
+    The ``dumpsys window displays`` output is fetched once and shared
+    between foreground-activity and window-title parsing.
+
+    Returns
+    -------
+    tuple[ScreenState, ReadTimings]
+        The screen state and per-stage timing breakdown.
     """
-    package, activity = await read_foreground_activity(serial)
+    timings = ReadTimings()
+    t_total = time.monotonic()
+
+    # ── Phase 1: shared dumpsys (one ADB call, reused below) ──────
+    t0 = time.monotonic()
+    window_displays = (await adb_manager.shell(serial, "dumpsys window displays")).stdout
+    package, activity = await read_foreground_activity(serial, window_dumpsys_output=window_displays)
+    timings.foreground_ms = int((time.monotonic() - t0) * 1000)
+
+    # ── Phase 2: parallel independent reads ───────────────────────
+    #   - hierarchy (if requested): uiautomator dump + cat XML
+    #   - fragments: dumpsys activity top
+    #   - window_title: parsed from shared output (0 ADB calls usually)
 
     elements: List[UIElement] = []
     xml_root: Optional[ET.Element] = None
@@ -548,14 +602,36 @@ async def read_screen_state(
     fragments: List[str] = []
     window_title: str = ""
 
-    if include_hierarchy:
-        elements, xml_root = await read_ui_hierarchy(serial)
-        focused = _find_focused(elements)
+    async def _timed_hierarchy() -> Tuple[List[UIElement], Optional[ET.Element]]:
+        t = time.monotonic()
+        result = await read_ui_hierarchy(serial)
+        timings.hierarchy_ms = int((time.monotonic() - t) * 1000)
+        return result
 
-    # Always fetch fragments + window title — they're cheap (~50ms each)
-    # and provide critical context for single-activity STB apps
-    fragments = await read_fragments(serial)
-    window_title = await read_window_title(serial)
+    async def _timed_fragments() -> List[str]:
+        t = time.monotonic()
+        result = await read_fragments(serial)
+        timings.fragments_ms = int((time.monotonic() - t) * 1000)
+        return result
+
+    async def _timed_window_title() -> str:
+        t = time.monotonic()
+        result = await read_window_title(serial, window_dumpsys_output=window_displays)
+        timings.window_title_ms = int((time.monotonic() - t) * 1000)
+        return result
+
+    if include_hierarchy:
+        (elements, xml_root), fragments, window_title = await asyncio.gather(
+            _timed_hierarchy(),
+            _timed_fragments(),
+            _timed_window_title(),
+        )
+        focused = _find_focused(elements)
+    else:
+        fragments, window_title = await asyncio.gather(
+            _timed_fragments(),
+            _timed_window_title(),
+        )
 
     # Build human-readable focused context from ALL signals
     focused_context = _build_focused_context(
@@ -567,6 +643,8 @@ async def read_screen_state(
         recent_events=recent_events,
     )
 
+    timings.total_ms = int((time.monotonic() - t_total) * 1000)
+
     return ScreenState(
         package=package,
         activity=activity,
@@ -577,7 +655,73 @@ async def read_screen_state(
         fragments=fragments,
         recent_events=recent_events or [],
         timestamp=datetime.now(timezone.utc).isoformat(),
+    ), timings
+
+
+async def read_screen_state_minimal(
+    serial: str,
+    recent_events: Optional[List[LogcatEvent]] = None,
+) -> tuple[ScreenState, ReadTimings]:
+    """Lightweight ADB read: foreground activity + fragments only.
+
+    Skips the expensive uiautomator hierarchy dump.  Used by the
+    vision-first fast path when the cache already knows what is on
+    screen and we only need package/activity for the navigation graph.
+
+    Returns
+    -------
+    tuple[ScreenState, ReadTimings]
+        Minimal screen state (empty ``ui_elements``) and timings.
+    """
+    timings = ReadTimings()
+    t_total = time.monotonic()
+
+    # Shared dumpsys — one ADB call
+    t0 = time.monotonic()
+    window_displays = (await adb_manager.shell(serial, "dumpsys window displays")).stdout
+    package, activity = await read_foreground_activity(serial, window_dumpsys_output=window_displays)
+    timings.foreground_ms = int((time.monotonic() - t0) * 1000)
+
+    # Fragments in parallel with window_title (usually 0ms from shared output)
+    async def _timed_fragments() -> List[str]:
+        t = time.monotonic()
+        result = await read_fragments(serial)
+        timings.fragments_ms = int((time.monotonic() - t) * 1000)
+        return result
+
+    async def _timed_window_title() -> str:
+        t = time.monotonic()
+        result = await read_window_title(serial, window_dumpsys_output=window_displays)
+        timings.window_title_ms = int((time.monotonic() - t) * 1000)
+        return result
+
+    fragments, window_title = await asyncio.gather(
+        _timed_fragments(),
+        _timed_window_title(),
     )
+
+    focused_context = _build_focused_context(
+        xml_root=None,
+        focused_el=None,
+        fragments=fragments,
+        window_title=window_title,
+        activity=activity,
+        recent_events=recent_events,
+    )
+
+    timings.total_ms = int((time.monotonic() - t_total) * 1000)
+
+    return ScreenState(
+        package=package,
+        activity=activity,
+        ui_elements=[],
+        focused_element=None,
+        focused_context=focused_context,
+        window_title=window_title,
+        fragments=fragments,
+        recent_events=recent_events or [],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    ), timings
 
 
 # ── Mock helpers ────────────────────────────────────────────────────

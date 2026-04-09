@@ -54,6 +54,10 @@ _nav_sequence: int = 0
 _last_cache_hit_nav_seq: int = -1
 _last_cache_result: Optional[VisionAnalysis] = None
 
+# Cache hit/miss counters for ratio tracking
+_vision_cache_hits: int = 0
+_vision_cache_misses: int = 0
+
 
 class VisionDiag(BaseModel):
     """Diagnostics for vision cache behavior."""
@@ -72,25 +76,35 @@ class VisionDiag(BaseModel):
     hamming_threshold: int = 0  # configured threshold
     hash_type: str = ""  # "perceptual" / "sha256" / "adb"
     invalidation_reason: str = ""  # "cache_hit" / "nav_fast_path" / "screen_changed" / "no_cache"
+    # Hit ratio
+    cache_hits_total: int = 0
+    cache_misses_total: int = 0
+    cache_hit_ratio_pct: float = 0.0
 
 
-async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnalysis], VisionDiag]:
-    """Return cached vision result or run a new analysis.
+def _fill_ratio(diag: VisionDiag) -> None:
+    """Populate hit ratio fields on diagnostics."""
+    total = _vision_cache_hits + _vision_cache_misses
+    diag.cache_hits_total = _vision_cache_hits
+    diag.cache_misses_total = _vision_cache_misses
+    diag.cache_hit_ratio_pct = round(_vision_cache_hits / total * 100, 1) if total > 0 else 0.0
 
-    Cache strategy (in order):
-      1. **Nav fast-path** — if no navigation since last hit, return cached
-         result without computing any hash (~0ms).
-      2. **Perceptual hash** — dHash of center-cropped HDMI frame.  Scan
-         all cache entries by Hamming distance; hit if ≤ threshold.
-         Recognizes previously-visited screens across time.
-      3. **ADB visual_hash** — fallback when HDMI streamer is off.
 
-    No TTL — entries are valid indefinitely.  LRU eviction at max entries.
+def _check_vision_cache(
+    threshold_override: Optional[int] = None,
+) -> tuple[Optional[VisionAnalysis], VisionDiag, Optional[bytes], Optional[str]]:
+    """Check the vision cache WITHOUT any ADB data.
+
+    Returns
+    -------
+    (vision, diag, frame, cache_key)
+        - On cache hit: vision is the cached result, frame/cache_key are set
+        - On cache miss: vision is None, frame/cache_key are set for the
+          caller to pass to ``_run_vision_analysis()``
     """
-    global _last_cache_hit_nav_seq, _last_cache_result
+    global _vision_cache_hits, _last_cache_hit_nav_seq, _last_cache_result
 
-    threshold = settings.stb_vision_cache_distance
-    max_entries = settings.stb_vision_cache_max
+    threshold = threshold_override if threshold_override is not None else settings.stb_vision_cache_distance
 
     diag = VisionDiag(
         cache_size=len(_vision_cache),
@@ -101,7 +115,6 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
 
     try:
         from ..video_capture import streamer
-
         diag.streamer_running = streamer.is_running()
     except ImportError:
         diag.streamer_running = False
@@ -111,12 +124,14 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
         _last_cache_result is not None
         and _nav_sequence == _last_cache_hit_nav_seq
     ):
+        _vision_cache_hits += 1
         diag.cache_hit = True
         diag.invalidation_reason = "nav_fast_path"
         diag.hash_type = "fast_path"
         diag.cache_key = "(skipped)"
         diag.cache_key_source = "nav_counter"
-        return _last_cache_result, diag
+        _fill_ratio(diag)
+        return _last_cache_result, diag, None, None
 
     # ── Get HDMI frame ─────────────────────────────────────────────
     frame: Optional[bytes] = None
@@ -128,70 +143,90 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
             pass
 
     # ── Compute cache key ──────────────────────────────────────────
+    cache_key: Optional[str] = None
     if frame:
         cache_key = fp.frame_hash(frame)
         if cache_key.startswith("sha256:"):
-            diag.cache_key_source = "sha256"
-            diag.hash_type = "sha256"
+            diag.cache_key_source = "sha256_raw"
+            diag.hash_type = "sha256_raw"
         else:
-            diag.cache_key_source = "perceptual"
-            diag.hash_type = "perceptual"
-    else:
+            diag.cache_key_source = "quantized"
+            diag.hash_type = "quantized"
+        diag.cache_key = cache_key
+
+    # ── Cache lookup (exact match — quantized hash is deterministic) ──
+    if cache_key and cache_key in _vision_cache:
+        cached_result = _vision_cache[cache_key]
+        _vision_cache.move_to_end(cache_key)
+
+        _vision_cache_hits += 1
+        diag.cache_hit = True
+        diag.hamming_distance = 0
+        diag.invalidation_reason = "cache_hit"
+        diag.cache_size = len(_vision_cache)
+
+        # Update fast-path state
+        _last_cache_hit_nav_seq = _nav_sequence
+        _last_cache_result = cached_result
+
+        _fill_ratio(diag)
+        return cached_result, diag, frame, cache_key
+
+    # Not in cache — return miss for caller to handle
+    diag.hamming_distance = 999
+    _fill_ratio(diag)
+    return None, diag, frame, cache_key
+
+
+async def _run_vision_analysis(
+    frame: Optional[bytes],
+    cache_key: Optional[str],
+    diag: VisionDiag,
+    adb_visual_hash: str = "",
+) -> tuple[Optional[VisionAnalysis], VisionDiag]:
+    """Run AI vision analysis on cache miss.
+
+    Called after ``_check_vision_cache()`` returns None.  Handles the
+    ADB fallback key, API call, and cache storage.
+    """
+    global _last_cache_hit_nav_seq, _last_cache_result, _vision_cache_misses, _vision_cache_hits
+
+    max_entries = settings.stb_vision_cache_max
+
+    # Use ADB visual hash as fallback key when no frame available
+    if not cache_key and adb_visual_hash:
         cache_key = adb_visual_hash
         diag.cache_key_source = "adb"
         diag.hash_type = "adb"
-    diag.cache_key = cache_key
+        diag.cache_key = cache_key
 
-    # ── Nearest-neighbor cache lookup by Hamming distance ──────────
-    if cache_key and _vision_cache:
-        best_distance = 999
-        best_key: Optional[str] = None
-        best_result: Optional[VisionAnalysis] = None
-
-        for cached_key, cached_vision in _vision_cache.items():
-            dist = fp.frame_hash_distance(cache_key, cached_key)
-            if dist < best_distance:
-                best_distance = dist
-                best_key = cached_key
-                best_result = cached_vision
-                if dist == 0:
-                    break  # exact match, no need to scan further
-
-        diag.hamming_distance = best_distance
-
-        if best_distance <= threshold and best_result is not None and best_key is not None:
-            # Cache hit — move to end for LRU
-            _vision_cache.move_to_end(best_key)
-            # Also store under the new key if different (screen captured
-            # from a slightly different angle/compression gets its own entry)
-            if best_key != cache_key:
-                _vision_cache[cache_key] = best_result
-                _vision_cache.move_to_end(cache_key)
-                # Evict if over limit
-                while len(_vision_cache) > max_entries:
-                    _vision_cache.popitem(last=False)
-
+        # Check cache with ADB key
+        if cache_key in _vision_cache:
+            cached_result = _vision_cache[cache_key]
+            _vision_cache.move_to_end(cache_key)
+            _vision_cache_hits += 1
             diag.cache_hit = True
+            diag.hamming_distance = 0
             diag.invalidation_reason = "cache_hit"
             diag.cache_size = len(_vision_cache)
-
-            # Update fast-path state
             _last_cache_hit_nav_seq = _nav_sequence
-            _last_cache_result = best_result
+            _last_cache_result = cached_result
+            _fill_ratio(diag)
+            return cached_result, diag
 
-            return best_result, diag
-
-    # ── Cache miss — need fresh analysis ───────────────────────────
     if not diag.streamer_running:
         diag.error = "HDMI streamer not running"
         diag.invalidation_reason = "no_streamer"
+        _fill_ratio(diag)
         return None, diag
 
     if frame is None:
         diag.error = "No HDMI frame available"
         diag.invalidation_reason = "no_frame"
+        _fill_ratio(diag)
         return None, diag
 
+    _vision_cache_misses += 1
     diag.invalidation_reason = "screen_changed" if _vision_cache else "no_cache"
 
     try:
@@ -227,14 +262,17 @@ async def _get_or_run_vision(adb_visual_hash: str) -> tuple[Optional[VisionAnaly
         _last_cache_hit_nav_seq = _nav_sequence
         _last_cache_result = vision
 
+        _fill_ratio(diag)
         return vision, diag
 
     except ImportError:
         diag.error = "Video capture module not available"
+        _fill_ratio(diag)
         return None, diag
     except Exception as e:
         diag.error = str(e)
         logger.warning("Vision analysis failed: %s", e)
+        _fill_ratio(diag)
         return None, diag
 
 
@@ -279,7 +317,17 @@ class ScreenStateDiag(BaseModel):
     fingerprint_inputs: str = ""  # what went into the fingerprint
     vision: Optional[VisionDiag] = None  # vision cache diagnostics
     adb_signals: int = 0  # number of non-empty ADB signal fields
-    read_ms: int = 0  # total time to read state
+    read_ms: int = 0  # total time to read state (kept for backward compat)
+    # Per-stage timing breakdown
+    adb_foreground_ms: int = 0
+    adb_hierarchy_ms: int = 0
+    adb_fragments_ms: int = 0
+    adb_window_title_ms: int = 0
+    adb_total_ms: int = 0
+    fingerprint_ms: int = 0
+    frame_hash_ms: int = 0
+    total_ms: int = 0
+    vision_fast_path: bool = False  # True when cache hit skipped full ADB
 
 
 class ScreenStateResponse(BaseModel):
@@ -298,37 +346,124 @@ async def get_state(
     serial: str = Query(..., description="ADB device serial"),
     include_hierarchy: bool = Query(True, description="Include uiautomator dump"),
     include_vision: bool = Query(False, description="Include AI vision analysis of HDMI frame"),
+    vision_threshold: Optional[int] = Query(None, ge=0, le=50, description="Override Hamming distance threshold for vision cache (0=exact match only, default from config)"),
 ) -> ScreenStateResponse:
     """STB_AUTOMATION — Read the current screen state via ADB + optional vision.
 
     Returns the foreground activity, UI hierarchy, focused element,
     and a fingerprint suitable for navigation graph identity.
 
-    When ``include_vision=true``, also captures the current HDMI frame
-    and runs AI vision analysis.  Results are cached by **visual_hash**
-    (volatile — changes with focus/text) not the stable fingerprint.
+    When ``include_vision=true``, the vision cache is checked **first**
+    (before any ADB work).  On a cache hit, only minimal ADB data is
+    collected (~50-100ms vs 400-800ms for full hierarchy).
 
     Always includes diagnostics showing cache hits, hash values, and timing.
     """
     _check_flag()
 
     t0 = time.time()
+    timings = screen_reader.ReadTimings()
 
     if settings.mock_mode:
         state = screen_reader.mock_screen_state()
-    else:
+        stable_fp = fp.fingerprint(state)
+        volatile_vh = fp.visual_hash(state)
+        diag = ScreenStateDiag(
+            fingerprint=stable_fp,
+            visual_hash=volatile_vh,
+            fingerprint_inputs=f"pkg={state.package} act={state.activity} elements={len(state.ui_elements)} frags={len(state.fragments)}",
+            adb_signals=7,
+        )
+        diag.total_ms = int((time.time() - t0) * 1000)
+        diag.read_ms = diag.total_ms
+        return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
+
+    # ── Vision-first fast path ─────────────────────────────────────
+    # When vision is requested, check the cache BEFORE any ADB work.
+    # On a cache hit, skip the expensive hierarchy dump entirely.
+    if include_vision:
+        t_hash = time.time()
+        vision, vision_diag, frame, cache_key = _check_vision_cache(
+            threshold_override=vision_threshold,
+        )
+        frame_hash_ms = int((time.time() - t_hash) * 1000)
+
+        if vision is not None:
+            # ── CACHE HIT: minimal ADB only ───────────────────────
+            monitor = get_monitor()
+            recent = monitor.get_events(last_n=5) if monitor.is_active else []
+            state, timings = await screen_reader.read_screen_state_minimal(
+                serial=serial,
+                recent_events=recent,
+            )
+
+            state.vision = vision
+            _enrich_focused_context(state, vision)
+
+            stable_fp = fp.fingerprint(state)
+            # No visual_hash on fast path (no ui_elements to hash)
+            diag = _build_diag(state, stable_fp, "", timings)
+            diag.vision = vision_diag
+            diag.frame_hash_ms = frame_hash_ms
+            diag.vision_fast_path = True
+            diag.total_ms = int((time.time() - t0) * 1000)
+            diag.read_ms = diag.total_ms
+            return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
+
+        # ── CACHE MISS: full ADB + AI API call ────────────────────
         monitor = get_monitor()
         recent = monitor.get_events(last_n=5) if monitor.is_active else []
-        state = await screen_reader.read_screen_state(
+        state, timings = await screen_reader.read_screen_state(
             serial=serial,
             recent_events=recent,
             include_hierarchy=include_hierarchy,
         )
 
+        stable_fp = fp.fingerprint(state)
+        volatile_vh = fp.visual_hash(state)
+        diag = _build_diag(state, stable_fp, volatile_vh, timings)
+        diag.frame_hash_ms = frame_hash_ms
+
+        # Run the AI analysis (frame and cache_key from the earlier check)
+        vision, vision_diag = await _run_vision_analysis(
+            frame=frame,
+            cache_key=cache_key,
+            diag=vision_diag,
+            adb_visual_hash=volatile_vh,
+        )
+        diag.vision = vision_diag
+        if vision:
+            state.vision = vision
+            _enrich_focused_context(state, vision)
+
+        diag.total_ms = int((time.time() - t0) * 1000)
+        diag.read_ms = diag.total_ms
+        return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
+
+    # ── No vision: standard ADB-only path (with parallelization) ──
+    monitor = get_monitor()
+    recent = monitor.get_events(last_n=5) if monitor.is_active else []
+    state, timings = await screen_reader.read_screen_state(
+        serial=serial,
+        recent_events=recent,
+        include_hierarchy=include_hierarchy,
+    )
+
     stable_fp = fp.fingerprint(state)
     volatile_vh = fp.visual_hash(state)
+    diag = _build_diag(state, stable_fp, volatile_vh, timings)
+    diag.total_ms = int((time.time() - t0) * 1000)
+    diag.read_ms = diag.total_ms
+    return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
 
-    # Count non-empty ADB signal fields for diagnostics
+
+def _build_diag(
+    state: ScreenState,
+    stable_fp: str,
+    volatile_vh: str,
+    timings: screen_reader.ReadTimings,
+) -> ScreenStateDiag:
+    """Build diagnostics with ADB signal count and timing breakdown."""
     adb_signals = sum([
         bool(state.package),
         bool(state.activity),
@@ -339,37 +474,35 @@ async def get_state(
         len(state.ui_elements) > 0,
     ])
 
-    # Build diagnostics
-    diag = ScreenStateDiag(
+    t_fp = time.time()
+    # fingerprint already computed by caller — this just measures overhead
+    fingerprint_ms = 0  # accounted for in caller
+    _ = t_fp  # suppress unused
+
+    return ScreenStateDiag(
         fingerprint=stable_fp,
         visual_hash=volatile_vh,
         fingerprint_inputs=f"pkg={state.package} act={state.activity} elements={len(state.ui_elements)} frags={len(state.fragments)}",
         adb_signals=adb_signals,
+        adb_foreground_ms=timings.foreground_ms,
+        adb_hierarchy_ms=timings.hierarchy_ms,
+        adb_fragments_ms=timings.fragments_ms,
+        adb_window_title_ms=timings.window_title_ms,
+        adb_total_ms=timings.total_ms,
+        fingerprint_ms=fingerprint_ms,
     )
 
-    # Run vision analysis if requested (cached by visual_hash — volatile)
-    if include_vision:
-        vision, vision_diag = await _get_or_run_vision(volatile_vh)
-        diag.vision = vision_diag
-        if vision:
-            state.vision = vision
-            # Enrich focused_context with vision data when ADB signals are sparse
-            if vision.focused_label:
-                vision_ctx = f"vision: {vision.focused_label}"
-                if vision.focused_position:
-                    vision_ctx += f" ({vision.focused_position})"
-                if state.focused_context:
-                    state.focused_context = f"{vision_ctx} | {state.focused_context}"
-                else:
-                    state.focused_context = vision_ctx
 
-    diag.read_ms = int((time.time() - t0) * 1000)
-
-    return ScreenStateResponse(
-        state=state,
-        fingerprint=stable_fp,
-        diag=diag,
-    )
+def _enrich_focused_context(state: ScreenState, vision: VisionAnalysis) -> None:
+    """Enrich focused_context with vision data when ADB signals are sparse."""
+    if vision.focused_label:
+        vision_ctx = f"vision: {vision.focused_label}"
+        if vision.focused_position:
+            vision_ctx += f" ({vision.focused_position})"
+        if state.focused_context:
+            state.focused_context = f"{vision_ctx} | {state.focused_context}"
+        else:
+            state.focused_context = vision_ctx
 
 
 # ── Logcat Events ──────────────────────────────────────────────────
@@ -572,6 +705,75 @@ async def delete_model(
     _check_flag()
     deleted = nav_model.delete_model(device_id)
     return {"deleted": deleted, "device_id": device_id}
+
+
+# ── Anomaly Detection (Phase 1D) ───────────────────────────────────
+
+
+# ── Vision Cache Debug ─────────────────────────────────────────────
+
+
+class VisionCacheEntry(BaseModel):
+    """Single entry from the vision cache for debug inspection."""
+    hash_key: str
+    screen_type: str = ""
+    screen_title: str = ""
+    focused_label: str = ""
+    tokens_used: int = 0
+
+
+class VisionCacheDebug(BaseModel):
+    """Full vision cache state for debugging."""
+    size: int = 0
+    max_size: int = 0
+    threshold: int = 0
+    nav_sequence: int = 0
+    has_perceptual_hash: bool = False
+    hits_total: int = 0
+    misses_total: int = 0
+    hit_ratio_pct: float = 0.0
+    entries: List[VisionCacheEntry] = []
+
+
+@router.get("/vision/cache")
+async def get_vision_cache() -> VisionCacheDebug:
+    """STB_AUTOMATION — Dump the vision cache for debugging."""
+    _check_flag()
+    entries = []
+    for key, vision in _vision_cache.items():
+        entries.append(VisionCacheEntry(
+            hash_key=key,
+            screen_type=vision.screen_type,
+            screen_title=vision.screen_title,
+            focused_label=vision.focused_label,
+            tokens_used=vision.tokens_used,
+        ))
+    total = _vision_cache_hits + _vision_cache_misses
+    return VisionCacheDebug(
+        size=len(_vision_cache),
+        max_size=settings.stb_vision_cache_max,
+        threshold=settings.stb_vision_cache_distance,
+        nav_sequence=_nav_sequence,
+        has_perceptual_hash=fp.has_perceptual_hash(),
+        hits_total=_vision_cache_hits,
+        misses_total=_vision_cache_misses,
+        hit_ratio_pct=round(_vision_cache_hits / total * 100, 1) if total > 0 else 0.0,
+        entries=entries,
+    )
+
+
+@router.delete("/vision/cache")
+async def clear_vision_cache() -> dict:
+    """STB_AUTOMATION — Clear the vision cache."""
+    _check_flag()
+    global _last_cache_hit_nav_seq, _last_cache_result, _vision_cache_hits, _vision_cache_misses
+    count = len(_vision_cache)
+    _vision_cache.clear()
+    _last_cache_hit_nav_seq = -1
+    _last_cache_result = None
+    _vision_cache_hits = 0
+    _vision_cache_misses = 0
+    return {"cleared": count}
 
 
 # ── Anomaly Detection (Phase 1D) ───────────────────────────────────

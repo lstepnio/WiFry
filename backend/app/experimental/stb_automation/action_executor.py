@@ -102,7 +102,7 @@ async def navigate(
     t_start = time.monotonic()
 
     # 1. Read pre-state (fast — dumpsys only, skip hierarchy)
-    pre_state = await screen_reader.read_screen_state(
+    pre_state, _ = await screen_reader.read_screen_state(
         serial, include_hierarchy=False,
     )
     pre_fp = fp.fingerprint_from_activity(pre_state.package, pre_state.activity)
@@ -165,7 +165,7 @@ async def _settle(
             # Event detected — wait a short animation settle
             await asyncio.sleep(0.15)
             recent = monitor.get_events(last_n=5)
-            state = await screen_reader.read_screen_state(
+            state, _ = await screen_reader.read_screen_state(
                 serial, recent_events=recent,
             )
             return "logcat", state
@@ -178,7 +178,7 @@ async def _settle(
         if pkg != pre_package or act != pre_activity:
             await asyncio.sleep(0.15)
             recent = monitor.get_events(last_n=5) if monitor.is_active else []
-            state = await screen_reader.read_screen_state(
+            state, _ = await screen_reader.read_screen_state(
                 serial, recent_events=recent,
             )
             return "dumpsys", state
@@ -186,7 +186,7 @@ async def _settle(
 
     # Tier 3: uiautomator structural hash (up to 3000ms total)
     recent = monitor.get_events(last_n=5) if monitor.is_active else []
-    state = await screen_reader.read_screen_state(
+    state, _ = await screen_reader.read_screen_state(
         serial, recent_events=recent,
     )
     post_fp = fp.fingerprint(state)

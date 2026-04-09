@@ -11,14 +11,17 @@ Three fingerprint levels:
      when the accessibility tree updates — but on NAF-heavy STBs like TiVo,
      the tree may NOT update when focus moves (highlight is purely visual).
 
-  3. ``frame_hash()`` — **perceptual hash** of the HDMI frame.
-     Uses dHash (difference hash) from the ``imagehash`` library on a
-     center-cropped frame.  Tolerant of JPEG compression noise (Hamming
-     distance 0-2) but detects real screen changes (distance 15+).
-     Center-crop removes 10% edges to ignore clock/status bar updates.
+  3. ``frame_hash()`` — **quantized downscale hash** of the HDMI frame.
+     Decodes JPEG → center-crop → resize to 64×48 → quantize pixel values
+     (divide by 8, rounding away JPEG compression noise) → SHA-256.
 
-     Falls back to SHA-256 prefixed with ``sha256:`` when imagehash/Pillow
-     are not installed.
+     This produces an **exact-match hash**: two JPEG captures of the same
+     screen always produce the same hash (JPEG noise is quantized away),
+     while even small visual changes (highlight shift) produce a completely
+     different hash.  No Hamming distance / fuzzy matching needed.
+
+     Falls back to SHA-256 of raw JPEG bytes prefixed with ``sha256:``
+     when Pillow is not installed.
 
 On NAF-heavy STBs (TiVo, etc.) where class_name, resource_id, text,
 focused, and selected are all empty/static, ``visual_hash`` degrades to
@@ -34,20 +37,21 @@ from .models import ScreenState, UIElement
 
 logger = logging.getLogger("wifry.stb_automation.fingerprint")
 
-# Conditional import for perceptual hashing
-_HAS_IMAGEHASH = False
+# Conditional import for image processing
+_HAS_PIL = False
 try:
-    import imagehash
     from PIL import Image
+    import numpy as np
 
-    _HAS_IMAGEHASH = True
+    _HAS_PIL = True
 except ImportError:
-    logger.info("imagehash/Pillow not installed — falling back to SHA-256 frame hash")
+    logger.info("Pillow/numpy not installed — falling back to raw SHA-256 frame hash")
 
 
-# dHash parameters
-_HASH_SIZE = 12  # 144-bit hash (12×12 gradient grid)
-_CROP_MARGIN = 0.10  # 10% off each edge
+# Quantized downscale parameters
+_DOWNSCALE_SIZE = (64, 48)  # Small enough to smooth noise, large enough to capture detail
+_QUANT_DIVISOR = 8  # Quantize pixel values: 256 levels → 32 levels per channel
+_CROP_MARGIN = 0.10  # 10% off each edge (removes clock/status bar)
 
 
 def fingerprint(state: ScreenState) -> str:
@@ -75,21 +79,27 @@ def visual_hash(state: ScreenState) -> str:
 
 
 def frame_hash(frame_jpeg: Optional[bytes]) -> str:
-    """Compute a perceptual hash of the HDMI frame.
+    """Compute a quantized downscale hash of the HDMI frame.
 
-    Uses dHash (difference hash) on a center-cropped frame:
-    - Center-crop: removes 10% from each edge (ignores clock/status bar)
-    - dHash with hash_size=12: 144-bit hash as 36-char hex string
-    - Tolerates JPEG compression noise (Hamming distance 0-2)
-    - Detects real changes (highlight moved: distance 15+)
+    Pipeline:
+      1. Decode JPEG → PIL Image
+      2. Center-crop 10% edges (removes clock/status bar)
+      3. Resize to 64×48 (each pixel averages ~20×15 original pixels)
+      4. Quantize: integer-divide each pixel channel by 8 (256→32 levels)
+      5. SHA-256 of the quantized pixel bytes → 16 hex chars
 
-    Returns ``sha256:<hex>`` fallback if imagehash/Pillow are not installed.
+    This is an **exact-match** hash — no fuzzy/Hamming distance needed:
+    - Two JPEG encodes of the same screen → identical hash (noise quantized away)
+    - Highlight bar shift → completely different hash (dozens of pixels change by 50+)
+    - Clock tick in cropped edge → no effect (cropped out)
+
+    Returns ``sha256:<raw-hex>`` fallback if Pillow is not installed.
     Returns empty string if no frame is available.
     """
     if not frame_jpeg:
         return ""
 
-    if _HAS_IMAGEHASH:
+    if _HAS_PIL:
         try:
             img = Image.open(io.BytesIO(frame_jpeg))
             # Center-crop: remove 10% from each edge
@@ -99,45 +109,39 @@ def frame_hash(frame_jpeg: Optional[bytes]) -> str:
             right = int(iw * (1 - _CROP_MARGIN))
             bottom = int(ih * (1 - _CROP_MARGIN))
             cropped = img.crop((left, top, right, bottom))
-            dhash = imagehash.dhash(cropped, hash_size=_HASH_SIZE)
-            return str(dhash)
-        except Exception as e:
-            logger.warning("Perceptual hash failed, falling back to SHA-256: %s", e)
 
-    # SHA-256 fallback (prefixed so we can distinguish in distance calc)
+            # Downscale — averages pixel blocks, smoothing JPEG noise
+            small = cropped.resize(_DOWNSCALE_SIZE, Image.LANCZOS)
+
+            # Quantize — rounds away remaining noise
+            arr = np.array(small, dtype=np.uint8)
+            quantized = (arr // _QUANT_DIVISOR).tobytes()
+
+            return hashlib.sha256(quantized).hexdigest()[:16]
+        except Exception as e:
+            logger.warning("Quantized hash failed, falling back to raw SHA-256: %s", e)
+
+    # Raw SHA-256 fallback (prefixed so we can distinguish)
     return f"sha256:{hashlib.sha256(frame_jpeg).hexdigest()[:24]}"
 
 
 def frame_hash_distance(a: str, b: str) -> int:
-    """Compute Hamming distance between two frame hashes.
+    """Compute distance between two frame hashes.
 
-    Returns the number of differing bits between two perceptual hashes.
-    - Distance 0-2: same screen (JPEG noise)
-    - Distance 6: configured threshold default
-    - Distance 15+: different screen position
-    - Distance 40+: entirely different screen
+    With quantized downscale hashing, this is binary: 0 (exact match) or
+    999 (different).  There is no meaningful Hamming distance — the hash
+    is a SHA-256 digest, not a perceptual hash.
 
-    Returns 999 for incompatible hashes (SHA-256 fallback, empty, mixed).
+    This function exists for API compatibility with the cache lookup code.
     """
     if not a or not b:
         return 999
-    if a.startswith("sha256:") or b.startswith("sha256:"):
-        # SHA-256 hashes: exact match only
-        return 0 if a == b else 999
-    if not _HAS_IMAGEHASH:
-        return 999
-
-    try:
-        hash_a = imagehash.hex_to_hash(a)
-        hash_b = imagehash.hex_to_hash(b)
-        return hash_a - hash_b
-    except Exception:
-        return 999
+    return 0 if a == b else 999
 
 
 def has_perceptual_hash() -> bool:
-    """Return True if perceptual hashing (imagehash) is available."""
-    return _HAS_IMAGEHASH
+    """Return True if image-based hashing (Pillow) is available."""
+    return _HAS_PIL
 
 
 def _structural_hash(elements: List[UIElement]) -> str:

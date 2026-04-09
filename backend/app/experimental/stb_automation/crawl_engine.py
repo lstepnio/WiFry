@@ -80,7 +80,7 @@ async def crawl_step(config: CrawlConfig) -> dict:
     model = nav_model.get_or_create_model(config.serial)
     monitor = get_monitor()
 
-    state = await screen_reader.read_screen_state(
+    state, _ = await screen_reader.read_screen_state(
         config.serial,
         recent_events=monitor.get_events(5) if monitor.is_active else [],
     )
@@ -143,7 +143,7 @@ async def _crawl_loop(config: CrawlConfig) -> None:
 
     try:
         # Read initial state
-        state = await screen_reader.read_screen_state(
+        state, _ = await screen_reader.read_screen_state(
             config.serial,
             recent_events=monitor.get_events(5) if monitor.is_active else [],
         )
@@ -170,7 +170,7 @@ async def _crawl_loop(config: CrawlConfig) -> None:
                 break
 
             # Navigate to current node if we're not already there
-            actual_state = await screen_reader.read_screen_state(
+            actual_state, _ = await screen_reader.read_screen_state(
                 config.serial, include_hierarchy=False,
             )
             actual_id = fp.fingerprint_from_activity(

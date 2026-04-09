@@ -72,6 +72,82 @@ const DEVICE_STATE_COLORS: Record<string, string> = {
 
 type PanelSection = 'remote' | 'crawl' | 'flows' | 'chaos' | 'nl';
 
+function VisionCacheDump() {
+  const [cache, setCache] = useState<import('../types').StbVisionCacheDebug | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleLoad = async () => {
+    setLoading(true);
+    try {
+      setCache(await api.getStbVisionCache());
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClear = async () => {
+    try {
+      await api.clearStbVisionCache();
+      setCache(null);
+    } catch {
+      // silent
+    }
+  };
+
+  return (
+    <div className="space-y-1 px-2 py-1">
+      <div className="flex gap-2">
+        <button onClick={handleLoad} disabled={loading} className={`${btnBase} border border-gray-300 px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800`}>
+          {loading ? 'Loading...' : 'Load Cache'}
+        </button>
+        <button onClick={handleClear} className={`${btnBase} border border-red-300 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20`}>
+          Clear Cache
+        </button>
+      </div>
+      {cache && (
+        <div className="space-y-1 font-mono text-[10px] text-gray-500 dark:text-gray-400">
+          <div>size: {cache.size}/{cache.max_size} | threshold: {cache.threshold} | nav_seq: {cache.nav_sequence} | perceptual: {String(cache.has_perceptual_hash)}</div>
+          <div>
+            hits: {cache.hits_total} | misses: {cache.misses_total} |{' '}
+            <span className={
+              cache.hit_ratio_pct >= 75 ? 'text-green-600 dark:text-green-400'
+                : cache.hit_ratio_pct >= 50 ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-red-600 dark:text-red-400'
+            }>ratio: {cache.hit_ratio_pct}%</span>
+          </div>
+          {cache.entries.length > 0 && (
+            <div className="max-h-40 overflow-y-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700">
+                    <th className="pb-0.5 pr-2">hash</th>
+                    <th className="pb-0.5 pr-2">screen</th>
+                    <th className="pb-0.5 pr-2">focused</th>
+                    <th className="pb-0.5">tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cache.entries.map((e, i) => (
+                    <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
+                      <td className="py-0.5 pr-2 text-gray-400">{e.hash_key.slice(0, 12)}...</td>
+                      <td className="py-0.5 pr-2">{e.screen_type}{e.screen_title ? `: ${e.screen_title}` : ''}</td>
+                      <td className="py-0.5 pr-2">{e.focused_label || '—'}</td>
+                      <td className="py-0.5">{e.tokens_used}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {cache.entries.length === 0 && <div className="text-gray-400">Empty cache</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StbAutomationPanel() {
   // ── Device State ───────────────────────────────────────────────────
   const [selectedSerial, setSelectedSerial] = useState<string | null>(null);
@@ -113,6 +189,7 @@ export default function StbAutomationPanel() {
   const [lastNav, setLastNav] = useState<StbNavigateResponse | null>(null);
   const [navigating, setNavigating] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  const [visionThreshold, setVisionThreshold] = useState(0);
 
   // HDMI stream
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -223,7 +300,7 @@ export default function StbAutomationPanel() {
       // If vision is enabled, re-read state with vision analysis in background
       // (navigate endpoint doesn't include vision to keep it fast)
       if (visionEnabled) {
-        api.getStbState(selectedSerial, true, true).then(s => setScreenState(s)).catch(() => {});
+        api.getStbState(selectedSerial, true, true, visionThreshold).then(s => setScreenState(s)).catch(() => {});
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Navigate failed');
@@ -236,7 +313,7 @@ export default function StbAutomationPanel() {
     if (!selectedSerial) return;
     setLoading(true);
     try {
-      const s = await api.getStbState(selectedSerial, true, visionEnabled);
+      const s = await api.getStbState(selectedSerial, true, visionEnabled, visionEnabled ? visionThreshold : undefined);
       setScreenState(s);
       setError(null);
     } catch (e) {
@@ -498,6 +575,22 @@ export default function StbAutomationPanel() {
               AI Vision
               {visionEnabled && <span className="text-[10px] text-amber-600 dark:text-amber-400">(uses API tokens)</span>}
             </label>
+            {visionEnabled && (
+              <div className="flex items-center gap-1.5">
+                <label className="text-[10px] text-gray-500 dark:text-gray-400" title="Hamming distance threshold for perceptual hash cache. Lower = stricter matching (more API calls, more accurate). Higher = looser (fewer API calls, risk of stale results).&#10;&#10;Suggested ranges:&#10;  0 = exact match only (no fuzzy cache)&#10;  1-2 = very strict (JPEG noise tolerance only)&#10;  3-4 = strict (recommended for menus)&#10;  6 = default (may be too loose for similar screens)&#10;  8-12 = loose (only for very different screens)">
+                  Cache d≤
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={visionThreshold}
+                  onChange={e => setVisionThreshold(Math.max(0, Math.min(50, parseInt(e.target.value) || 0)))}
+                  className="w-12 rounded border border-gray-300 px-1 py-0.5 text-center text-[11px] text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                  title="Hamming distance threshold (0=exact, 1-2=strict, 3-4=recommended, 6=default)"
+                />
+              </div>
+            )}
             {status && (
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 Monitor:{' '}
@@ -650,7 +743,10 @@ export default function StbAutomationPanel() {
                       )}
                       {screenState.diag && (
                         <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                          {screenState.diag.read_ms}ms &middot; {screenState.diag.adb_signals} signals
+                          {screenState.diag.total_ms ?? screenState.diag.read_ms}ms &middot; {screenState.diag.adb_signals} signals
+                          {screenState.diag.vision_fast_path && (
+                            <span className="ml-1 rounded bg-green-100 px-1 py-0.5 font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-300">FAST PATH</span>
+                          )}
                         </span>
                       )}
                     </div>
@@ -702,6 +798,18 @@ export default function StbAutomationPanel() {
                               <span className={`${badge} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>
                                 {screenState.diag.vision.hash_type}
                               </span>
+                              {/* Hit ratio badge */}
+                              {(screenState.diag.vision.cache_hits_total + screenState.diag.vision.cache_misses_total) > 0 && (
+                                <span className={`${badge} ${
+                                  screenState.diag.vision.cache_hit_ratio_pct >= 75
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                                    : screenState.diag.vision.cache_hit_ratio_pct >= 50
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300'
+                                      : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+                                }`}>
+                                  {screenState.diag.vision.cache_hit_ratio_pct}% hit ({screenState.diag.vision.cache_hits_total}/{screenState.diag.vision.cache_hits_total + screenState.diag.vision.cache_misses_total})
+                                </span>
+                              )}
                             </>
                           )}
                         </div>
@@ -759,9 +867,9 @@ export default function StbAutomationPanel() {
                       <span className="text-gray-500 dark:text-gray-400">UI Elements: </span>
                       <span className="text-gray-900 dark:text-white">{screenState.state.ui_elements?.length ?? 0}</span>
                     </div>
-                    {/* Diagnostics panel — collapsible */}
+                    {/* Diagnostics panel — expanded by default */}
                     {screenState.diag && (
-                      <details className="rounded border border-gray-200 dark:border-gray-700">
+                      <details open className="rounded border border-gray-200 dark:border-gray-700">
                         <summary className="cursor-pointer px-2 py-1 text-[10px] font-medium text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800">
                           Diagnostics
                         </summary>
@@ -770,7 +878,10 @@ export default function StbAutomationPanel() {
                           <div>visual_hash: {screenState.diag.visual_hash}</div>
                           <div>inputs: {screenState.diag.fingerprint_inputs}</div>
                           <div>adb_signals: {screenState.diag.adb_signals}</div>
-                          <div>read_ms: {screenState.diag.read_ms}</div>
+                          <div>total_ms: {screenState.diag.total_ms ?? screenState.diag.read_ms}{screenState.diag.vision_fast_path ? ' ⚡ fast path' : ''}</div>
+                          {screenState.diag.adb_total_ms !== undefined && (
+                            <div>adb: {screenState.diag.adb_foreground_ms ?? 0}+{screenState.diag.adb_hierarchy_ms ?? 0}+{screenState.diag.adb_fragments_ms ?? 0}+{screenState.diag.adb_window_title_ms ?? 0}={screenState.diag.adb_total_ms}ms{screenState.diag.frame_hash_ms ? ` | hash: ${screenState.diag.frame_hash_ms}ms` : ''}</div>
+                          )}
                           {screenState.diag.vision && (
                             <>
                               <div className="mt-1 border-t border-gray-200 pt-1 dark:border-gray-700">vision:</div>
@@ -791,6 +902,15 @@ export default function StbAutomationPanel() {
                             </>
                           )}
                         </div>
+                      </details>
+                    )}
+                    {/* Vision Cache dump — collapsible */}
+                    {visionEnabled && (
+                      <details open className="rounded border border-gray-200 dark:border-gray-700">
+                        <summary className="cursor-pointer px-2 py-1 text-[10px] font-medium text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800">
+                          Vision Cache
+                        </summary>
+                        <VisionCacheDump />
                       </details>
                     )}
                   </div>
