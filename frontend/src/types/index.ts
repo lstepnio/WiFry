@@ -735,8 +735,15 @@ export interface StbScreenStateResponse {
 export interface StbCrawlStatus {
   state: string;
   current_node_id: string | null;
+  current_phase: string;
+  current_action: string;
   nodes_discovered: number;
   transitions_executed: number;
+  transitions_skipped: number;
+  ai_calls_saved: number;
+  unexplored_targets: number;
+  elapsed_secs: number;
+  avg_action_ms: number;
   error: string | null;
 }
 

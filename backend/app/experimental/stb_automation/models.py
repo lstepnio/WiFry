@@ -126,7 +126,7 @@ class CrawlConfig(BaseModel):
     serial: str
     max_depth: int = 5
     max_transitions: int = 200
-    settle_timeout_ms: int = 3000
+    settle_timeout_ms: int = 1000  # reduced from 3000 — logcat is fast enough
     enable_vision_fallback: bool = True
     enable_logcat_monitor: bool = True
     logcat_tags: List[str] = ["ActivityManager:I", "WindowManager:I"]
@@ -138,6 +138,19 @@ class CrawlConfig(BaseModel):
         "enter",
         "back",
     ]
+    # Smart crawl strategy
+    use_map_predictions: bool = True  # skip AI when map predicts with high confidence
+    prediction_confidence: float = 0.6  # threshold for trusting a prediction during crawl
+    prioritize_menu: bool = True  # explore menu items before content tiles
+    menu_keywords: List[str] = [
+        "settings", "apps", "guide", "search", "my shows",
+        "input", "network", "account", "help", "what to watch",
+        "home", "live tv", "on demand", "menu",
+    ]
+    content_keywords: List[str] = [
+        "play", "resume", "watch", "episode", "season",
+        "movie", "show", "series", "channel", "pause",
+    ]
 
 
 class CrawlStatus(BaseModel):
@@ -145,8 +158,15 @@ class CrawlStatus(BaseModel):
 
     state: str = "idle"  # idle, running, paused, completed, error
     current_node_id: Optional[str] = None
+    current_phase: str = ""  # analyzing_map, navigating, exploring, entering
+    current_action: str = ""  # e.g. "down on 'Settings'"
     nodes_discovered: int = 0
     transitions_executed: int = 0
+    transitions_skipped: int = 0  # skipped via map prediction
+    ai_calls_saved: int = 0  # AI calls avoided via predict()
+    unexplored_targets: int = 0  # remaining unexplored triples
+    elapsed_secs: float = 0.0
+    avg_action_ms: float = 0.0
     error: Optional[str] = None
 
 

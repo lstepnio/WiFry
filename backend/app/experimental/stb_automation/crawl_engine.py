@@ -1,22 +1,24 @@
-"""STB_AUTOMATION — BFS crawl engine with AI-guided discovery.
+"""STB_AUTOMATION — Smart crawl engine with map-aware discovery.
 
-Explores the STB UI by sending key presses and recording transitions
-into the unified vision map.  Uses vision analysis to identify focused
-elements for rich element-level mapping.
+Four-phase strategy:
+  A. Map analysis — find unexplored areas from existing data
+  B. Directed navigation — navigate TO targets using pathfinding
+  C. Smart sibling sweep — use map predictions to skip AI calls
+  D. Prioritized enter — menu items first, content last
 
-Works with single-activity STBs (like TiVo) by tracking state changes
-via vision (focused element changed) rather than activity changes.
-
-The engine runs as an async background task.
+Works with single-activity STBs by tracking focused_element changes.
+Uses vision_map.predict() to avoid expensive AI calls (~6s each)
+when the map already knows what a transition will produce.
 """
 
 import asyncio
 import logging
+import time
 from typing import Optional, Set
 
 from . import action_executor, fingerprint as fp, screen_reader, vision_cache, vision_map
 from .logcat_monitor import get_monitor
-from .models import CrawlConfig, CrawlStatus, ScreenState, VisionAnalysis
+from .models import CrawlConfig, CrawlStatus, VisionAnalysis
 
 logger = logging.getLogger("wifry.stb_automation.crawl_engine")
 
@@ -38,8 +40,9 @@ async def start_crawl(config: CrawlConfig) -> CrawlStatus:
     _crawl_status = CrawlStatus(state="running")
     _crawl_cancel.clear()
     _crawl_task = asyncio.create_task(_crawl_loop(config))
-    logger.info("[STB_AUTOMATION] Crawl started: serial=%s max_depth=%d vision=%s",
-                config.serial, config.max_depth, config.enable_vision_fallback)
+    logger.info("[STB_AUTOMATION] Crawl started: serial=%s depth=%d transitions=%d vision=%s predictions=%s",
+                config.serial, config.max_depth, config.max_transitions,
+                config.enable_vision_fallback, config.use_map_predictions)
     return _crawl_status
 
 
@@ -54,8 +57,6 @@ async def stop_crawl() -> CrawlStatus:
         except asyncio.TimeoutError:
             _crawl_task.cancel()
     _crawl_status.state = "completed"
-    logger.info("[STB_AUTOMATION] Crawl stopped: %d nodes, %d transitions",
-                _crawl_status.nodes_discovered, _crawl_status.transitions_executed)
     return _crawl_status
 
 
@@ -63,27 +64,21 @@ async def crawl_step(config: CrawlConfig) -> dict:
     """Execute a single exploration step (manual mode)."""
     monitor = get_monitor()
     state, _ = await screen_reader.read_screen_state(
-        config.serial,
+        config.serial, include_hierarchy=False,
         recent_events=monitor.get_events(5) if monitor.is_active else [],
-        include_hierarchy=False,
     )
     screen_key = f"{state.package}/{state.activity}"
-    pre_focused = await _get_focused_label(config.serial, config.enable_vision_fallback)
-    if pre_focused:
-        vision_map.set_last_focused(screen_key, pre_focused)
+    focused = await _get_focused_label(config.serial, config.enable_vision_fallback)
+    if focused:
+        vision_map.set_last_focused(screen_key, focused)
 
-    tried = _tried_actions(screen_key, pre_focused)
-    action = None
-    for a in config.explore_actions:
-        if a not in tried:
-            action = a
-            break
+    tried = {e.action for e in vision_map.get_screen_entries(screen_key)
+             if e.from_element == focused}
+    action = next((a for a in config.explore_actions if a not in tried), None)
 
-    if action is None:
+    if not action:
         vision_map.save()
-        return {"status": "exhausted", "screen_key": screen_key,
-                "focused": pre_focused or "",
-                "message": "All actions tried from this element"}
+        return {"status": "exhausted", "screen_key": screen_key, "focused": focused}
 
     result = await action_executor.navigate(
         serial=config.serial, action=action,
@@ -94,7 +89,7 @@ async def crawl_step(config: CrawlConfig) -> dict:
 
     vision_map.observe_transition(
         screen_key=screen_key, action=action,
-        from_element=pre_focused or screen_key,
+        from_element=focused or screen_key,
         to_element=post_focused or post_key,
         to_screen_key=post_key if post_key != screen_key else "",
         transition_ms=result.settle_ms, source="crawl",
@@ -106,8 +101,7 @@ async def crawl_step(config: CrawlConfig) -> dict:
     return {
         "status": "stepped", "action": action,
         "from_screen": screen_key, "to_screen": post_key,
-        "from_focused": pre_focused or "", "to_focused": post_focused or "",
-        "transitioned": pre_focused != post_focused or post_key != screen_key,
+        "from_focused": focused, "to_focused": post_focused,
         "settle_ms": round(result.settle_ms, 1),
     }
 
@@ -116,16 +110,12 @@ async def crawl_step(config: CrawlConfig) -> dict:
 
 
 async def _get_focused_label(serial: str, enable_vision: bool) -> str:
-    """Get the current focused element label via vision cache or AI."""
     if not enable_vision:
         return ""
-
     try:
         from ..video_capture import streamer, analyzer
-
         if not streamer.is_running():
             return ""
-
         frame = streamer.get_latest_frame()
         if frame is None:
             return ""
@@ -149,15 +139,10 @@ async def _get_focused_label(serial: str, enable_vision: bool) -> str:
             provider=result.provider or "",
             tokens_used=result.tokens_used or 0,
         )
-
         if cache_key:
             vision_cache.put(cache_key, vision_obj)
         vision_map.update_fast_path(vision_obj)
-
-        logger.debug("[STB_AUTOMATION] Crawl vision: %s focused='%s' screen=%s",
-                     result.provider, vision_obj.focused_label, vision_obj.screen_type)
         return vision_obj.focused_label or ""
-
     except ImportError:
         return ""
     except Exception as e:
@@ -165,128 +150,205 @@ async def _get_focused_label(serial: str, enable_vision: bool) -> str:
         return ""
 
 
-# ── BFS crawl loop ─────────────────────────────────────────────────
+# ── Smart crawl loop ───────────────────────────────────────────────
 
-# Queue item: (screen_key, focused_element, depth, path)
-_QueueItem = tuple[str, str, int, list[str]]
+
+# Queue item: (priority, screen_key, focused_element, depth)
+_QueueItem = tuple[int, str, str, int]
 
 
 async def _crawl_loop(config: CrawlConfig) -> None:
     global _crawl_status
     monitor = get_monitor()
+    t_start = time.monotonic()
     transitions = 0
+    skipped = 0
+    ai_saved = 0
     use_vision = config.enable_vision_fallback
 
     try:
-        # Read initial state + vision
+        # ── Phase A: Analyze existing map ──────────────────────
+        _crawl_status.current_phase = "analyzing_map"
+
+        explored: Set[tuple[str, str, str]] = set()
+        for screen_key in list(vision_map._transitions.keys()):
+            for (action, from_el) in vision_map._transitions[screen_key]:
+                explored.add((screen_key, from_el, action))
+
+        logger.info("[STB_AUTOMATION] Phase A: %d existing transitions across %d screens",
+                     len(explored), len(vision_map._screens))
+
+        # Get initial state
         state, _ = await screen_reader.read_screen_state(
-            config.serial,
+            config.serial, include_hierarchy=False,
             recent_events=monitor.get_events(5) if monitor.is_active else [],
-            include_hierarchy=False,
         )
         root_key = f"{state.package}/{state.activity}"
         root_focused = await _get_focused_label(config.serial, use_vision)
         if root_focused:
             vision_map.set_last_focused(root_key, root_focused)
 
-        logger.info("[STB_AUTOMATION] Crawl root: screen=%s focused='%s'",
-                    root_key, root_focused)
+        logger.info("[STB_AUTOMATION] Root: screen=%s focused='%s'", root_key, root_focused)
 
-        _crawl_status.nodes_discovered = max(1, len(vision_map._screens))
-        _crawl_status.current_node_id = f"{root_key}::{root_focused}"
+        # Build frontier of unexplored targets from known elements
+        frontier = _build_frontier(explored, config.explore_actions)
+        _crawl_status.unexplored_targets = len(frontier)
 
-        # BFS queue: (screen_key, focused_element, depth, path)
-        queue: list[_QueueItem] = [(root_key, root_focused, 0, [])]
-        # Track explored: (screen_key, focused_element, action)
-        explored: Set[tuple[str, str, str]] = set()
+        # Priority queue: lower number = explore first
+        queue: list[_QueueItem] = []
+        queue.append((0, root_key, root_focused, 0))
 
+        # Add frontier menu items with high priority
+        seen_queue: Set[tuple[str, str]] = {(root_key, root_focused)}
+        for (sk, elem, _action) in frontier:
+            if (sk, elem) not in seen_queue:
+                seen_queue.add((sk, elem))
+                priority = _element_priority(elem, config)
+                queue.append((priority, sk, elem, 1 if sk != root_key else 0))
+
+        # Sort by priority
+        queue.sort(key=lambda x: x[0])
+
+        _update_status(_crawl_status, transitions, skipped, ai_saved, frontier, t_start)
+
+        # ── Main crawl loop ────────────────────────────────────
         while queue and not _crawl_cancel.is_set():
-            current_key, current_focused, depth, path = queue.pop(0)
+            _priority, current_key, current_focused, depth = queue.pop(0)
 
             if depth >= config.max_depth or transitions >= config.max_transitions:
                 continue
 
-            # Verify we're at the right state
-            actual_state, _ = await screen_reader.read_screen_state(
-                config.serial, include_hierarchy=False,
-            )
-            actual_key = f"{actual_state.package}/{actual_state.activity}"
-
-            if actual_key != current_key:
-                # Try to get back to the right screen
-                recovered = await _navigate_to(config, current_key, monitor)
-                if not recovered:
-                    logger.warning("[STB_AUTOMATION] Could not reach %s, skipping", current_key)
-                    continue
-
+            # ── Phase B: Navigate to target ────────────────────
+            _crawl_status.current_phase = "navigating"
             _crawl_status.current_node_id = f"{current_key}::{current_focused}"
+            _crawl_status.current_action = f"navigating to '{current_focused}'"
 
-            for action in config.explore_actions:
+            actual_key, actual_focused = await _ensure_at(
+                config, current_key, current_focused, monitor,
+            )
+            if actual_key != current_key:
+                logger.warning("[STB_AUTOMATION] Could not reach %s, skipping", current_key)
+                continue
+
+            # ── Phase C: Sibling sweep (directional) ───────────
+            _crawl_status.current_phase = "exploring"
+            directional = [a for a in config.explore_actions if a not in ("enter", "back")]
+
+            for action in directional:
                 if _crawl_cancel.is_set() or transitions >= config.max_transitions:
                     break
 
-                # Track by (screen, element, action) — not just (screen, action)
-                explore_key = (current_key, current_focused or current_key, action)
+                from_el = current_focused or current_key
+                explore_key = (current_key, from_el, action)
                 if explore_key in explored:
+                    skipped += 1
                     continue
                 explored.add(explore_key)
 
-                # Get pre-state focused
-                pre_focused = vision_map.get_last_focused(current_key)
-                if not pre_focused and use_vision:
-                    pre_focused = await _get_focused_label(config.serial, use_vision)
-                    if pre_focused:
-                        vision_map.set_last_focused(current_key, pre_focused)
+                # Try map prediction first
+                post_focused = None
+                used_prediction = False
+                if config.use_map_predictions:
+                    prediction = vision_map.predict(
+                        current_key, action, from_el,
+                        min_confidence=config.prediction_confidence,
+                        min_observations=1,
+                    )
+                    if prediction:
+                        post_focused = prediction.to_element
+                        used_prediction = True
+                        ai_saved += 1
 
+                # Execute action
+                _crawl_status.current_action = f"{action} on '{from_el}'"
                 result = await action_executor.navigate(
                     serial=config.serial, action=action,
                     settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
                 )
                 transitions += 1
-                _crawl_status.transitions_executed = transitions
 
                 post_key = f"{result.post_state.package}/{result.post_state.activity}"
-                post_focused = ""
-                if use_vision:
+
+                # Get post-focused: use prediction or AI
+                if not used_prediction and use_vision:
                     post_focused = await _get_focused_label(config.serial, True)
 
-                # Record observation
+                # Record
                 vision_map.observe_transition(
                     screen_key=current_key, action=action,
-                    from_element=pre_focused or current_key,
+                    from_element=from_el,
                     to_element=post_focused or post_key,
                     to_screen_key=post_key if post_key != current_key else "",
                     transition_ms=result.settle_ms, source="crawl",
                 )
                 if post_focused:
-                    target_key = post_key if post_key != current_key else current_key
-                    vision_map.set_last_focused(target_key, post_focused)
+                    target = post_key if post_key != current_key else current_key
+                    vision_map.set_last_focused(target, post_focused)
+                    current_focused = post_focused
 
-                _crawl_status.nodes_discovered = len(vision_map._screens)
+                _update_status(_crawl_status, transitions, skipped, ai_saved, frontier, t_start)
 
-                # Determine if we reached a new state worth exploring deeper
-                state_changed = (
-                    post_key != current_key  # activity change
-                    or (post_focused and post_focused != pre_focused)  # focus change
-                )
+            # ── Phase D: Enter on current element ──────────────
+            if "enter" in config.explore_actions and not _crawl_cancel.is_set():
+                from_el = current_focused or current_key
+                enter_key = (current_key, from_el, "enter")
 
-                if state_changed and action == "enter":
-                    # "enter" opens a sub-screen — explore it deeper
-                    new_item: _QueueItem = (post_key, post_focused, depth + 1, path + [action])
-                    # Only queue if we haven't fully explored this state
-                    if not _all_actions_explored(explored, post_key, post_focused, config.explore_actions):
-                        queue.append(new_item)
-                        logger.info("[STB_AUTOMATION] Crawl queued: screen=%s focused='%s' depth=%d",
-                                    post_key, post_focused, depth + 1)
+                if enter_key not in explored and transitions < config.max_transitions:
+                    # Skip content tiles if menu items are still unexplored
+                    if config.prioritize_menu and _is_content(from_el, config):
+                        if _has_unexplored_menu(current_key, explored, config):
+                            logger.info("[STB_AUTOMATION] Deferring enter on content '%s'", from_el)
+                            queue.append((10, current_key, from_el, depth))
+                            continue
 
-                # Navigate back after enter (to continue exploring siblings)
-                if state_changed and action == "enter":
+                    explored.add(enter_key)
+                    _crawl_status.current_phase = "entering"
+                    _crawl_status.current_action = f"enter on '{from_el}'"
+
+                    result = await action_executor.navigate(
+                        serial=config.serial, action="enter",
+                        settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
+                    )
+                    transitions += 1
+
+                    post_key = f"{result.post_state.package}/{result.post_state.activity}"
+                    post_focused = ""
+                    if use_vision:
+                        post_focused = await _get_focused_label(config.serial, True)
+
+                    vision_map.observe_transition(
+                        screen_key=current_key, action="enter",
+                        from_element=from_el,
+                        to_element=post_focused or post_key,
+                        to_screen_key=post_key if post_key != current_key else "",
+                        transition_ms=result.settle_ms, source="crawl",
+                    )
+
+                    # Detect if we entered something worth exploring
+                    state_changed = (
+                        post_key != current_key
+                        or (post_focused and post_focused != from_el)
+                    )
+
+                    if state_changed:
+                        # Check if it's a player (skip deeper)
+                        if _is_content(post_focused or "", config):
+                            logger.info("[STB_AUTOMATION] Hit content screen, backing out")
+                        else:
+                            # Queue for deeper exploration
+                            priority = _element_priority(post_focused or "", config)
+                            queue.append((priority, post_key, post_focused, depth + 1))
+                            queue.sort(key=lambda x: x[0])
+                            logger.info("[STB_AUTOMATION] Queued depth=%d: '%s' on %s",
+                                       depth + 1, post_focused, post_key.split("/")[-1])
+
+                    # Navigate back
+                    _crawl_status.current_phase = "returning"
                     back_result = await action_executor.navigate(
                         serial=config.serial, action="back",
                         settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
                     )
                     transitions += 1
-                    _crawl_status.transitions_executed = transitions
 
                     back_key = f"{back_result.post_state.package}/{back_result.post_state.activity}"
                     back_focused = ""
@@ -303,10 +365,14 @@ async def _crawl_loop(config: CrawlConfig) -> None:
                     if back_focused:
                         vision_map.set_last_focused(back_key, back_focused)
 
-                if transitions % SAVE_INTERVAL == 0:
-                    vision_map.save()
+                    _update_status(_crawl_status, transitions, skipped, ai_saved, frontier, t_start)
+
+            if transitions % SAVE_INTERVAL == 0:
+                vision_map.save()
 
         _crawl_status.state = "completed"
+        _crawl_status.current_phase = ""
+        _crawl_status.current_action = ""
 
     except asyncio.CancelledError:
         _crawl_status.state = "completed"
@@ -317,25 +383,125 @@ async def _crawl_loop(config: CrawlConfig) -> None:
     finally:
         vision_map.save()
         vision_cache.save()
-        logger.info("[STB_AUTOMATION] Crawl finished: %d screens, %d transitions",
-                     len(vision_map._screens), transitions)
+        elapsed = round(time.monotonic() - t_start, 1)
+        logger.info("[STB_AUTOMATION] Crawl finished: %d screens, %d transitions, "
+                     "%d skipped, %d AI saved, %.1fs",
+                     len(vision_map._screens), transitions, skipped, ai_saved, elapsed)
 
 
-def _all_actions_explored(
+# ── Helpers ────────────────────────────────────────────────────────
+
+
+def _build_frontier(
     explored: Set[tuple[str, str, str]],
-    screen_key: str,
-    focused: str,
     actions: list[str],
-) -> bool:
-    """Check if all actions have been tried from this state."""
-    for action in actions:
-        if (screen_key, focused or screen_key, action) not in explored:
-            return False
-    return True
+) -> list[tuple[str, str, str]]:
+    """Find unexplored (screen_key, element, action) triples from known elements."""
+    frontier = []
+    for screen_key in list(vision_map._transitions.keys()):
+        elements: Set[str] = set()
+        for (action, from_el), entry in vision_map._transitions[screen_key].items():
+            elements.add(from_el)
+            if entry.to_element:
+                elements.add(entry.to_element)
+        for element in elements:
+            for action in actions:
+                if (screen_key, element, action) not in explored:
+                    frontier.append((screen_key, element, action))
+    return frontier
+
+
+def _element_priority(element: str, config: CrawlConfig) -> int:
+    """Lower = higher priority. Menu=0, unknown=5, content=10."""
+    if not element:
+        return 5
+    el_lower = element.lower()
+    for kw in config.menu_keywords:
+        if kw in el_lower:
+            return 0
+    for kw in config.content_keywords:
+        if kw in el_lower:
+            return 10
+    return 5
+
+
+def _is_content(element: str, config: CrawlConfig) -> bool:
+    if not element:
+        return False
+    el_lower = element.lower()
+    for kw in config.content_keywords:
+        if kw in el_lower:
+            return True
+    if len(element) > 25 and not any(kw in el_lower for kw in config.menu_keywords):
+        return True
+    return False
+
+
+def _has_unexplored_menu(screen_key: str, explored: set, config: CrawlConfig) -> bool:
+    entries = vision_map.get_screen_entries(screen_key)
+    known = {e.from_element for e in entries} | {e.to_element for e in entries}
+    for el in known:
+        if _element_priority(el, config) == 0:
+            if (screen_key, el, "enter") not in explored:
+                return True
+    return False
+
+
+def _update_status(
+    status: CrawlStatus,
+    transitions: int,
+    skipped: int,
+    ai_saved: int,
+    frontier: list,
+    t_start: float,
+) -> None:
+    elapsed = time.monotonic() - t_start
+    status.transitions_executed = transitions
+    status.transitions_skipped = skipped
+    status.ai_calls_saved = ai_saved
+    status.nodes_discovered = len(vision_map._screens)
+    status.unexplored_targets = len(frontier) - skipped if frontier else 0
+    status.elapsed_secs = round(elapsed, 1)
+    if transitions > 0:
+        status.avg_action_ms = round((elapsed * 1000) / transitions, 0)
+
+
+async def _ensure_at(
+    config: CrawlConfig,
+    target_key: str,
+    target_focused: str,
+    monitor,
+) -> tuple[str, str]:
+    """Ensure we're at the right screen+element."""
+    state, _ = await screen_reader.read_screen_state(
+        config.serial, include_hierarchy=False,
+    )
+    actual_key = f"{state.package}/{state.activity}"
+
+    if actual_key != target_key:
+        recovered = await _navigate_to(config, target_key, monitor)
+        if not recovered:
+            return actual_key, ""
+        actual_key = target_key
+
+    actual_focused = vision_map.get_last_focused(actual_key) or ""
+
+    # Try to navigate to specific element within screen
+    if target_focused and actual_focused and actual_focused != target_focused:
+        path = vision_map.find_element_path(actual_key, actual_focused, target_focused)
+        if path and len(path) <= 10:
+            for action in path:
+                await action_executor.navigate(
+                    serial=config.serial, action=action,
+                    settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
+                )
+            actual_focused = target_focused
+            vision_map.set_last_focused(actual_key, actual_focused)
+
+    return actual_key, actual_focused
 
 
 async def _navigate_to(config: CrawlConfig, target_key: str, monitor) -> bool:
-    """Navigate to a screen using home + vision map pathfinding."""
     home_result = await action_executor.navigate(
         serial=config.serial, action="home",
         settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
@@ -343,24 +509,14 @@ async def _navigate_to(config: CrawlConfig, target_key: str, monitor) -> bool:
     home_key = f"{home_result.post_state.package}/{home_result.post_state.activity}"
     if home_key == target_key:
         return True
-
     path = vision_map.find_screen_path(home_key, target_key)
     if path is None:
         return False
-
-    for action, _element in path:
+    for action, _ in path:
         result = await action_executor.navigate(
             serial=config.serial, action=action,
             settle_timeout_ms=config.settle_timeout_ms, monitor=monitor,
         )
-        current_key = f"{result.post_state.package}/{result.post_state.activity}"
-        if current_key == target_key:
+        if f"{result.post_state.package}/{result.post_state.activity}" == target_key:
             return True
-
     return False
-
-
-def _tried_actions(screen_key: str, focused: str = "") -> Set[str]:
-    """Return actions already observed from this element on this screen."""
-    entries = vision_map.get_screen_entries(screen_key)
-    return {e.action for e in entries if e.from_element == focused or not focused}

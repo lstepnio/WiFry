@@ -207,6 +207,8 @@ export default function StbAutomationPanel() {
 
   // Crawl
   const [crawlStatus, setCrawlStatus] = useState<StbCrawlStatus | null>(null);
+  const polledCrawl = status?.crawl ?? null;
+  const effectiveCrawlStatus = polledCrawl && polledCrawl.state !== 'idle' ? polledCrawl : crawlStatus;
 
   // Flows
   const [flows, setFlows] = useState<StbTestFlow[]>([]);
@@ -1178,39 +1180,40 @@ export default function StbAutomationPanel() {
               </p>
 
               <div className="mb-4 flex gap-2">
-                <button onClick={handleStartCrawl} disabled={crawlStatus?.state === 'running'} className={btnSuccess}>
+                <button onClick={handleStartCrawl} disabled={effectiveCrawlStatus?.state === 'running'} className={btnSuccess}>
                   Start Crawl
                 </button>
-                <button onClick={handleStopCrawl} disabled={crawlStatus?.state !== 'running'} className={btnDanger}>
+                <button onClick={handleStopCrawl} disabled={effectiveCrawlStatus?.state !== 'running'} className={btnDanger}>
                   Stop Crawl
                 </button>
               </div>
 
-              {crawlStatus && (
+              {effectiveCrawlStatus && (
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 dark:text-gray-400">State:</span>
-                    <span className={`${badge} ${STATE_COLORS[crawlStatus.state] || STATE_COLORS.idle}`}>{crawlStatus.state}</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">Nodes: </span>
-                      <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.nodes_discovered}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">Transitions: </span>
-                      <span className="font-semibold text-gray-900 dark:text-white">{crawlStatus.transitions_executed}</span>
-                    </div>
-                    {crawlStatus.current_node_id && (
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400">Current: </span>
-                        <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300">{crawlStatus.current_node_id}</span>
-                      </div>
+                    <span className={`${badge} ${STATE_COLORS[effectiveCrawlStatus.state] || STATE_COLORS.idle}`}>{effectiveCrawlStatus.state}</span>
+                    {effectiveCrawlStatus.current_phase && (
+                      <span className="italic text-gray-400 dark:text-gray-500">{effectiveCrawlStatus.current_phase}</span>
                     )}
                   </div>
-                  {crawlStatus.error && (
+                  {effectiveCrawlStatus.current_action && (
+                    <div className="font-mono text-[11px] text-blue-600 dark:text-blue-400">
+                      {effectiveCrawlStatus.current_action}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div><span className="text-gray-500">Transitions: </span><span className="font-semibold">{effectiveCrawlStatus.transitions_executed}</span></div>
+                    <div><span className="text-gray-500">Nodes: </span><span className="font-semibold">{effectiveCrawlStatus.nodes_discovered}</span></div>
+                    <div><span className="text-gray-500">Skipped (map): </span><span className="font-semibold text-green-600 dark:text-green-400">{effectiveCrawlStatus.transitions_skipped || 0}</span></div>
+                    <div><span className="text-gray-500">AI saved: </span><span className="font-semibold text-green-600 dark:text-green-400">{effectiveCrawlStatus.ai_calls_saved || 0}</span></div>
+                    <div><span className="text-gray-500">Remaining: </span><span className="font-semibold">{effectiveCrawlStatus.unexplored_targets || 0}</span></div>
+                    <div><span className="text-gray-500">Avg/action: </span><span className="font-semibold">{effectiveCrawlStatus.avg_action_ms || 0}ms</span></div>
+                    <div><span className="text-gray-500">Elapsed: </span><span className="font-semibold">{effectiveCrawlStatus.elapsed_secs || 0}s</span></div>
+                  </div>
+                  {effectiveCrawlStatus.error && (
                     <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300">
-                      {crawlStatus.error}
+                      {effectiveCrawlStatus.error}
                     </div>
                   )}
                 </div>
