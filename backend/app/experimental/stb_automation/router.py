@@ -20,7 +20,6 @@ All endpoints return 404 if the feature flag is disabled.
 import asyncio
 import logging
 import time
-from collections import OrderedDict
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -28,7 +27,7 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows, vision_cache
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
 from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
@@ -42,22 +41,9 @@ router = APIRouter(
 
 _FLAG_NAME = "stb_automation"
 
-# ── Vision cache — perceptual hash with nearest-neighbor lookup ────
-# Uses dHash (imagehash) on center-cropped HDMI frames.  Two captures
-# of the same screen have Hamming distance 0-2 despite JPEG noise.
-# No TTL — entries are valid as long as the screen looks the same.
-# LRU eviction bounds memory (each entry ~1-2KB).
-_vision_cache: OrderedDict[str, VisionAnalysis] = OrderedDict()
-
-# Navigation counter — fast-path: if no navigation happened since
-# the last cache hit, skip hash computation entirely.
-_nav_sequence: int = 0
-_last_cache_hit_nav_seq: int = -1
-_last_cache_result: Optional[VisionAnalysis] = None
-
-# Cache hit/miss counters for ratio tracking
-_vision_cache_hits: int = 0
-_vision_cache_misses: int = 0
+# ── Vision cache — backed by vision_cache module ──────────────────
+# All cache state (OrderedDict, nav counter, hit/miss stats) lives
+# in vision_cache.py for clean persistence and future Redis swap.
 
 
 class VisionDiag(BaseModel):
@@ -85,10 +71,10 @@ class VisionDiag(BaseModel):
 
 def _fill_ratio(diag: VisionDiag) -> None:
     """Populate hit ratio fields on diagnostics."""
-    total = _vision_cache_hits + _vision_cache_misses
-    diag.cache_hits_total = _vision_cache_hits
-    diag.cache_misses_total = _vision_cache_misses
-    diag.cache_hit_ratio_pct = round(_vision_cache_hits / total * 100, 1) if total > 0 else 0.0
+    s = vision_cache.stats()
+    diag.cache_hits_total = s["hits"]
+    diag.cache_misses_total = s["misses"]
+    diag.cache_hit_ratio_pct = s["hit_ratio_pct"]
 
 
 def _check_vision_cache(
@@ -103,14 +89,13 @@ def _check_vision_cache(
         - On cache miss: vision is None, frame/cache_key are set for the
           caller to pass to ``_run_vision_analysis()``
     """
-    global _vision_cache_hits, _last_cache_hit_nav_seq, _last_cache_result
-
     threshold = threshold_override if threshold_override is not None else settings.stb_vision_cache_distance
+    s = vision_cache.stats()
 
     diag = VisionDiag(
-        cache_size=len(_vision_cache),
-        nav_sequence=_nav_sequence,
-        cached_nav_sequence=_last_cache_hit_nav_seq,
+        cache_size=s["size"],
+        nav_sequence=s["nav_sequence"],
+        cached_nav_sequence=s["last_cache_hit_nav_seq"],
         hamming_threshold=threshold,
     )
 
@@ -121,18 +106,15 @@ def _check_vision_cache(
         diag.streamer_running = False
 
     # ── Fast path: no navigation since last cache hit ──────────────
-    if (
-        _last_cache_result is not None
-        and _nav_sequence == _last_cache_hit_nav_seq
-    ):
-        _vision_cache_hits += 1
+    fast_result = vision_cache.check_fast_path()
+    if fast_result is not None:
         diag.cache_hit = True
         diag.invalidation_reason = "nav_fast_path"
         diag.hash_type = "fast_path"
         diag.cache_key = "(skipped)"
         diag.cache_key_source = "nav_counter"
         _fill_ratio(diag)
-        return _last_cache_result, diag, None, None
+        return fast_result, diag, None, None
 
     # ── Get HDMI frame ─────────────────────────────────────────────
     frame: Optional[bytes] = None
@@ -156,22 +138,17 @@ def _check_vision_cache(
         diag.cache_key = cache_key
 
     # ── Cache lookup (exact match — quantized hash is deterministic) ──
-    if cache_key and cache_key in _vision_cache:
-        cached_result = _vision_cache[cache_key]
-        _vision_cache.move_to_end(cache_key)
+    if cache_key:
+        cached_result = vision_cache.get(cache_key)
+        if cached_result is not None:
+            diag.cache_hit = True
+            diag.hamming_distance = 0
+            diag.invalidation_reason = "cache_hit"
+            diag.cache_size = s["size"]
 
-        _vision_cache_hits += 1
-        diag.cache_hit = True
-        diag.hamming_distance = 0
-        diag.invalidation_reason = "cache_hit"
-        diag.cache_size = len(_vision_cache)
-
-        # Update fast-path state
-        _last_cache_hit_nav_seq = _nav_sequence
-        _last_cache_result = cached_result
-
-        _fill_ratio(diag)
-        return cached_result, diag, frame, cache_key
+            vision_cache.update_fast_path(cached_result)
+            _fill_ratio(diag)
+            return cached_result, diag, frame, cache_key
 
     # Not in cache — return miss for caller to handle
     diag.hamming_distance = 999
@@ -190,10 +167,6 @@ async def _run_vision_analysis(
     Called after ``_check_vision_cache()`` returns None.  Handles the
     ADB fallback key, API call, and cache storage.
     """
-    global _last_cache_hit_nav_seq, _last_cache_result, _vision_cache_misses, _vision_cache_hits
-
-    max_entries = settings.stb_vision_cache_max
-
     # Use ADB visual hash as fallback key when no frame available
     if not cache_key and adb_visual_hash:
         cache_key = adb_visual_hash
@@ -202,16 +175,13 @@ async def _run_vision_analysis(
         diag.cache_key = cache_key
 
         # Check cache with ADB key
-        if cache_key in _vision_cache:
-            cached_result = _vision_cache[cache_key]
-            _vision_cache.move_to_end(cache_key)
-            _vision_cache_hits += 1
+        cached_result = vision_cache.get(cache_key)
+        if cached_result is not None:
             diag.cache_hit = True
             diag.hamming_distance = 0
             diag.invalidation_reason = "cache_hit"
-            diag.cache_size = len(_vision_cache)
-            _last_cache_hit_nav_seq = _nav_sequence
-            _last_cache_result = cached_result
+            diag.cache_size = vision_cache.stats()["size"]
+            vision_cache.update_fast_path(cached_result)
             _fill_ratio(diag)
             return cached_result, diag
 
@@ -227,8 +197,8 @@ async def _run_vision_analysis(
         _fill_ratio(diag)
         return None, diag
 
-    _vision_cache_misses += 1
-    diag.invalidation_reason = "screen_changed" if _vision_cache else "no_cache"
+    s = vision_cache.stats()
+    diag.invalidation_reason = "screen_changed" if s["size"] > 0 else "no_cache"
 
     try:
         from ..video_capture import analyzer
@@ -237,7 +207,7 @@ async def _run_vision_analysis(
         result = await analyzer.analyze_frame(frame_jpeg=frame)
         diag.api_call_ms = int((time.time() - t0) * 1000)
 
-        vision = VisionAnalysis(
+        vision_obj = VisionAnalysis(
             screen_type=result.screen_type or "unknown",
             screen_title=result.screen_title or "",
             focused_label=result.focused_element.label if result.focused_element else "",
@@ -252,19 +222,13 @@ async def _run_vision_analysis(
 
         # Store in cache
         if cache_key:
-            _vision_cache[cache_key] = vision
-            _vision_cache.move_to_end(cache_key)
-            while len(_vision_cache) > max_entries:
-                _vision_cache.popitem(last=False)
+            vision_cache.put(cache_key, vision_obj)
 
-        diag.cache_size = len(_vision_cache)
-
-        # Update fast-path state
-        _last_cache_hit_nav_seq = _nav_sequence
-        _last_cache_result = vision
+        diag.cache_size = vision_cache.stats()["size"]
+        vision_cache.update_fast_path(vision_obj)
 
         _fill_ratio(diag)
-        return vision, diag
+        return vision_obj, diag
 
     except ImportError:
         diag.error = "Video capture module not available"
@@ -590,8 +554,7 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
     _check_flag()
 
     # Increment nav counter so vision cache fast-path knows to re-hash
-    global _nav_sequence
-    _nav_sequence += 1
+    vision_cache.increment_nav()
 
     if settings.mock_mode:
         result = await action_executor.navigate_mock(req.action)
@@ -743,43 +706,37 @@ class VisionCacheDebug(BaseModel):
 
 
 @router.get("/vision/cache")
-async def get_vision_cache() -> VisionCacheDebug:
+async def get_vision_cache_debug() -> VisionCacheDebug:
     """STB_AUTOMATION — Dump the vision cache for debugging."""
     _check_flag()
     entries = []
-    for key, vision in _vision_cache.items():
+    for key, analysis in vision_cache.items():
         entries.append(VisionCacheEntry(
             hash_key=key,
-            screen_type=vision.screen_type,
-            screen_title=vision.screen_title,
-            focused_label=vision.focused_label,
-            tokens_used=vision.tokens_used,
+            screen_type=analysis.screen_type,
+            screen_title=analysis.screen_title,
+            focused_label=analysis.focused_label,
+            tokens_used=analysis.tokens_used,
         ))
-    total = _vision_cache_hits + _vision_cache_misses
+    s = vision_cache.stats()
     return VisionCacheDebug(
-        size=len(_vision_cache),
-        max_size=settings.stb_vision_cache_max,
+        size=s["size"],
+        max_size=s["max_size"],
         threshold=settings.stb_vision_cache_distance,
-        nav_sequence=_nav_sequence,
+        nav_sequence=s["nav_sequence"],
         has_perceptual_hash=fp.has_perceptual_hash(),
-        hits_total=_vision_cache_hits,
-        misses_total=_vision_cache_misses,
-        hit_ratio_pct=round(_vision_cache_hits / total * 100, 1) if total > 0 else 0.0,
+        hits_total=s["hits"],
+        misses_total=s["misses"],
+        hit_ratio_pct=s["hit_ratio_pct"],
         entries=entries,
     )
 
 
 @router.delete("/vision/cache")
-async def clear_vision_cache() -> dict:
+async def clear_vision_cache_endpoint() -> dict:
     """STB_AUTOMATION — Clear the vision cache."""
     _check_flag()
-    global _last_cache_hit_nav_seq, _last_cache_result, _vision_cache_hits, _vision_cache_misses
-    count = len(_vision_cache)
-    _vision_cache.clear()
-    _last_cache_hit_nav_seq = -1
-    _last_cache_result = None
-    _vision_cache_hits = 0
-    _vision_cache_misses = 0
+    count = vision_cache.clear()
     return {"cleared": count}
 
 

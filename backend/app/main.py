@@ -46,10 +46,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("WiFi capability detection failed (non-fatal): %s", e)
 
+    # Load persisted vision cache (non-fatal)
+    try:
+        from .experimental.stb_automation import vision_cache
+        count = vision_cache.load()
+        if count:
+            logger.info("[STB_AUTOMATION] Vision cache loaded: %d entries", count)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("Vision cache load failed (non-fatal): %s", e)
+
     yield
 
     # --- Graceful shutdown: cancel background tasks, kill subprocesses ---
     logger.info("WiFry shutting down — cleaning up...")
+
+    # Persist vision cache to disk
+    try:
+        from .experimental.stb_automation import vision_cache
+        count = vision_cache.save()
+        if count:
+            logger.info("[STB_AUTOMATION] Vision cache saved: %d entries", count)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("Vision cache save failed (non-fatal): %s", e)
     try:
         from .services import wifi_impairment, gremlin, capture, adb_manager
         # Deactivate gremlin if active
