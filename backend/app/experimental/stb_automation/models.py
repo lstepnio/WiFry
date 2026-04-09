@@ -245,3 +245,23 @@ class ChaosResult(BaseModel):
     screens_visited: int = 0
     anomalies: List[DetectedAnomaly] = []
     seed_used: int = 0
+
+
+# --- UI Map (learned menu patterns) ---
+
+
+class UIMapEntry(BaseModel):
+    """A learned focus transition within a single screen."""
+
+    screen_key: str = ""  # activity fingerprint (package/activity)
+    action: str = ""  # "up", "down", "left", "right", "enter", "back"
+    from_focused: str = ""  # focused_label before action
+    to_focused: str = ""  # focused_label after action
+    to_screen_type: str = "unknown"  # screen_type after
+    to_screen_title: str = ""  # screen_title after
+    to_focused_position: str = ""  # position description
+    to_focused_confidence: str = "low"  # high, medium, low
+    to_navigation_path: List[str] = []  # breadcrumb
+    observation_count: int = 0  # times this exact transition observed
+    confidence: float = 0.0  # 0.0-1.0, derived from observations + consistency
+    last_observed: str = ""  # ISO timestamp

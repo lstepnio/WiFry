@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from ...config import settings
 from ...services import feature_flags
-from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows, vision_cache
+from . import action_executor, chaos_engine, crawl_engine, diagnostics, fingerprint as fp, nav_model, nl_runner, screen_reader, test_flows, ui_map, vision_cache
 from .anomaly_detector import get_detector
 from .logcat_monitor import get_monitor
 from .models import AnomalyPattern, ChaosConfig, ChaosResult, CrawlConfig, CrawlStatus, DetectedAnomaly, LogcatEvent, NavigationModel, ScreenNode, ScreenState, TestFlow, TestFlowRun, TestStep, VisionAnalysis
@@ -370,6 +370,26 @@ async def get_state(
             state.vision = vision
             _enrich_focused_context(state, vision)
 
+            # Record observation in UI map — cache hits are as trustworthy
+            # as fresh AI calls (same pixels = same result by definition)
+            if vision.focused_label:
+                screen_key = f"{state.package}/{state.activity}"
+                _map_action = ui_map.get_last_action()
+                _map_from_focused = ui_map.get_last_focused(screen_key)
+                if _map_action and _map_from_focused:
+                    ui_map.observe(
+                        screen_key=screen_key,
+                        action=_map_action,
+                        from_focused=_map_from_focused,
+                        to_focused=vision.focused_label,
+                        to_screen_type=vision.screen_type,
+                        to_screen_title=vision.screen_title,
+                        to_focused_position=vision.focused_position,
+                        to_focused_confidence=vision.focused_confidence,
+                        to_navigation_path=vision.navigation_path,
+                    )
+                ui_map.set_last_focused(screen_key, vision.focused_label)
+
             stable_fp = fp.fingerprint(state)
             # No visual_hash on fast path (no ui_elements to hash)
             diag = _build_diag(state, stable_fp, "", timings)
@@ -380,28 +400,40 @@ async def get_state(
             diag.read_ms = diag.total_ms
             return ScreenStateResponse(state=state, fingerprint=stable_fp, diag=diag)
 
-        # ── CACHE MISS: ADB + AI API call IN PARALLEL ─────────────
-        # The AI vision call and ADB reads are independent — overlap them.
-        # Skip hierarchy on the vision path — vision provides better
-        # focus/element data than uiautomator on most STBs.
+        # ── UI MAP PREDICTION (before expensive AI call) ──────────
+        # If we know the screen, action, and previous focused element,
+        # the UI map may predict the new state without any AI call.
+        _map_screen_key = ""
+        _map_from_focused = ""
+        _map_action = ui_map.get_last_action()
+
+        # Read minimal ADB to get screen_key for prediction
         monitor = get_monitor()
         recent = monitor.get_events(last_n=5) if monitor.is_active else []
-
-        adb_task = screen_reader.read_screen_state(
+        state, timings = await screen_reader.read_screen_state(
             serial=serial,
             recent_events=recent,
             include_hierarchy=False,
         )
+        _map_screen_key = f"{state.package}/{state.activity}"
+        _map_from_focused = ui_map.get_last_focused(_map_screen_key)
+
+        # Attempt prediction (only used if map_enabled query param not False)
+        map_prediction = ui_map.predict(
+            screen_key=_map_screen_key,
+            action=_map_action,
+            from_focused=_map_from_focused,
+        ) if _map_action and _map_from_focused else None
+
+        # ── CACHE MISS: AI vision call ────────────────────────────
+        # Run AI analysis to get ground truth (also validates predictions)
         vision_task = _run_vision_analysis(
             frame=frame,
             cache_key=cache_key,
             diag=vision_diag,
             system_prompt=vision_prompt,
         )
-
-        (state, timings), (vision, vision_diag) = await asyncio.gather(
-            adb_task, vision_task,
-        )
+        vision, vision_diag = await vision_task
 
         stable_fp = fp.fingerprint_from_activity(state.package, state.activity)
         diag = _build_diag(state, stable_fp, "", timings)
@@ -410,6 +442,32 @@ async def get_state(
         if vision:
             state.vision = vision
             _enrich_focused_context(state, vision)
+
+            # Record observation in UI map
+            if _map_from_focused and _map_action and vision.focused_label:
+                ui_map.observe(
+                    screen_key=_map_screen_key,
+                    action=_map_action,
+                    from_focused=_map_from_focused,
+                    to_focused=vision.focused_label,
+                    to_screen_type=vision.screen_type,
+                    to_screen_title=vision.screen_title,
+                    to_focused_position=vision.focused_position,
+                    to_focused_confidence=vision.focused_confidence,
+                    to_navigation_path=vision.navigation_path,
+                )
+
+            # Validate prediction if we had one
+            if map_prediction and vision.focused_label:
+                ui_map.validate(
+                    screen_key=_map_screen_key,
+                    action=_map_action,
+                    from_focused=_map_from_focused,
+                    actual_focused=vision.focused_label,
+                )
+
+            # Update last focused for next prediction
+            ui_map.set_last_focused(_map_screen_key, vision.focused_label)
 
         diag.total_ms = int((time.time() - t0) * 1000)
         diag.read_ms = diag.total_ms
@@ -561,6 +619,8 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
 
     # Increment nav counter so vision cache fast-path knows to re-hash
     vision_cache.increment_nav()
+    # Record last action for UI map predictions
+    ui_map.set_last_action(req.action)
 
     if settings.mock_mode:
         result = await action_executor.navigate_mock(req.action)
@@ -752,6 +812,45 @@ async def clear_vision_cache_endpoint() -> dict:
     """STB_AUTOMATION — Clear the vision cache."""
     _check_flag()
     count = vision_cache.clear()
+    return {"cleared": count}
+
+
+# ── UI Map (learned menu patterns) ─────────────────────────────────
+
+
+@router.get("/ui-map")
+async def get_ui_map() -> dict:
+    """STB_AUTOMATION — Get the learned UI map."""
+    _check_flag()
+    return {
+        "screens": ui_map.get_all_screens(),
+        "stats": ui_map.stats(),
+    }
+
+
+@router.get("/ui-map/screen")
+async def get_ui_map_screen(screen_key: str = Query(...)) -> dict:
+    """STB_AUTOMATION — Get all learned transitions for a screen."""
+    _check_flag()
+    entries = ui_map.get_screen_entries(screen_key)
+    return {
+        "screen_key": screen_key,
+        "entries": [e.model_dump() for e in entries],
+    }
+
+
+@router.get("/ui-map/stats")
+async def get_ui_map_stats() -> dict:
+    """STB_AUTOMATION — Get UI map prediction statistics."""
+    _check_flag()
+    return ui_map.stats()
+
+
+@router.delete("/ui-map")
+async def clear_ui_map() -> dict:
+    """STB_AUTOMATION — Clear the learned UI map."""
+    _check_flag()
+    count = ui_map.clear()
     return {"cleared": count}
 
 

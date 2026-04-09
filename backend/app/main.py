@@ -57,12 +57,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Vision cache load failed (non-fatal): %s", e)
 
+    # Load persisted UI map (non-fatal)
+    try:
+        from .experimental.stb_automation import ui_map
+        count = ui_map.load()
+        if count:
+            logger.info("[STB_AUTOMATION] UI map loaded: %d entries", count)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("UI map load failed (non-fatal): %s", e)
+
     yield
 
     # --- Graceful shutdown: cancel background tasks, kill subprocesses ---
     logger.info("WiFry shutting down — cleaning up...")
 
-    # Persist vision cache to disk
+    # Persist vision cache and UI map to disk
     try:
         from .experimental.stb_automation import vision_cache
         count = vision_cache.save()
@@ -72,6 +83,15 @@ async def lifespan(app: FastAPI):
         pass
     except Exception as e:
         logger.warning("Vision cache save failed (non-fatal): %s", e)
+    try:
+        from .experimental.stb_automation import ui_map
+        count = ui_map.save()
+        if count:
+            logger.info("[STB_AUTOMATION] UI map saved: %d entries", count)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("UI map save failed (non-fatal): %s", e)
     try:
         from .services import wifi_impairment, gremlin, capture, adb_manager
         # Deactivate gremlin if active
