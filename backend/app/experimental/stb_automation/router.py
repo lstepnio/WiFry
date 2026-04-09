@@ -273,6 +273,7 @@ async def stb_status() -> StbStatus:
         logcat_monitor_active=monitor.is_active,
         logcat_session_id=monitor.session_id,
         logcat_serial=monitor.serial,
+        crawl=crawl_engine.get_status(),
     )
 
 
