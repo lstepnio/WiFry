@@ -448,7 +448,7 @@ async def get_state(
         map_prediction = vision_map.predict(
             screen_key=_map_screen_key,
             action=_map_action,
-            from_focused=_map_from_focused,
+            from_element=_map_from_focused,
         ) if _map_action and _map_from_focused else None
 
         # ── MAP HIT: use prediction, skip AI call entirely ────────
@@ -457,7 +457,7 @@ async def get_state(
             predicted_vision = VisionAnalysis(
                 screen_type=map_prediction.to_screen_type,
                 screen_title=map_prediction.to_screen_title,
-                focused_label=map_prediction.to_focused,
+                focused_label=map_prediction.to_element,
                 focused_position=map_prediction.to_focused_position,
                 focused_confidence=map_prediction.to_focused_confidence,
                 navigation_path=map_prediction.to_navigation_path,
@@ -466,14 +466,14 @@ async def get_state(
             )
             state.vision = predicted_vision
             _enrich_focused_context(state, predicted_vision)
-            vision_map.set_last_focused(_map_screen_key, map_prediction.to_focused)
+            vision_map.set_last_focused(_map_screen_key, map_prediction.to_element)
 
             # Record as observation (reinforces confidence)
             vision_map.observe(
                 screen_key=_map_screen_key,
                 action=_map_action,
                 from_focused=_map_from_focused,
-                to_focused=map_prediction.to_focused,
+                to_focused=map_prediction.to_element,
                 to_screen_type=map_prediction.to_screen_type,
                 to_screen_title=map_prediction.to_screen_title,
                 to_focused_position=map_prediction.to_focused_position,
@@ -489,7 +489,7 @@ async def get_state(
                 screen_key=_map_screen_key,
                 last_action=_map_action,
                 from_focused=_map_from_focused,
-                to_focused=map_prediction.to_focused,
+                to_focused=map_prediction.to_element,
                 observation_recorded=True,
                 prediction_available=True,
                 prediction_confidence=map_prediction.confidence,
@@ -931,20 +931,20 @@ async def get_ui_map_graph() -> dict:
         entries = vision_map.get_screen_entries(screen_key)
         for entry in entries:
             # Create node IDs that include screen context
-            from_id = f"{screen_key}::{entry.from_focused}"
-            to_id = f"{screen_key}::{entry.to_focused}"
+            from_id = f"{screen_key}::{entry.from_element}"
+            to_id = f"{screen_key}::{entry.to_element}"
             if from_id not in node_set:
                 node_set.add(from_id)
                 nodes.append({
                     "id": from_id,
-                    "label": entry.from_focused,
+                    "label": entry.from_element,
                     "screen_key": screen_key,
                 })
             if to_id not in node_set:
                 node_set.add(to_id)
                 nodes.append({
                     "id": to_id,
-                    "label": entry.to_focused,
+                    "label": entry.to_element,
                     "screen_key": screen_key,
                     "screen_type": entry.to_screen_type,
                 })
