@@ -190,6 +190,7 @@ export default function StbAutomationPanel() {
   const [navigating, setNavigating] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const [visionThreshold, setVisionThreshold] = useState(0);
+  const [settleTimeoutMs, setSettleTimeoutMs] = useState(3000);
 
   // HDMI stream
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -290,7 +291,7 @@ export default function StbAutomationPanel() {
     setNavigating(true);
     setError(null);
     try {
-      const result = await api.stbNavigate(selectedSerial, action);
+      const result = await api.stbNavigate(selectedSerial, action, settleTimeoutMs);
       setLastNav(result);
       setScreenState({
         state: result.post_state,
@@ -591,6 +592,22 @@ export default function StbAutomationPanel() {
                 />
               </div>
             )}
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-gray-500 dark:text-gray-400" title="Maximum time (ms) to wait for the screen to settle after a key press.&#10;&#10;Lower = faster navigation but may miss slow transitions.&#10;Higher = more reliable transition detection but slower.&#10;&#10;Suggested values:&#10;  200-500 = fast (with vision + logcat active)&#10;  1000 = balanced&#10;  3000 = conservative (default)&#10;  5000 = very slow STBs">
+                Settle
+              </label>
+              <input
+                type="number"
+                min={200}
+                max={5000}
+                step={100}
+                value={settleTimeoutMs}
+                onChange={e => setSettleTimeoutMs(Math.max(200, Math.min(5000, parseInt(e.target.value) || 3000)))}
+                className="w-16 rounded border border-gray-300 px-1 py-0.5 text-center text-[11px] text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                title="Settle timeout in milliseconds (200-5000, default 3000)"
+              />
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">ms</span>
+            </div>
             {status && (
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 Monitor:{' '}
@@ -710,6 +727,29 @@ export default function StbAutomationPanel() {
                             <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
                             <span className="w-[40px] text-right tabular-nums text-[10px] font-medium text-gray-600 dark:text-gray-300">{Math.round(total)}ms</span>
                           </div>
+                          {/* ADB signal values */}
+                          {t.signals && (
+                            <details className="mt-1.5">
+                              <summary className="cursor-pointer text-[10px] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+                                signals ({t.signals.ui_elements_count} elements)
+                              </summary>
+                              <div className="mt-1 space-y-0.5 rounded bg-gray-100 p-1.5 font-mono text-[9px] dark:bg-gray-800">
+                                {[
+                                  ['pkg', t.signals.package],
+                                  ['act', t.signals.activity],
+                                  ['wt', t.signals.window_title],
+                                  ['frags', t.signals.fragments?.join(', ')],
+                                  ['focus', t.signals.focused_element],
+                                  ['ctx', t.signals.focused_context],
+                                ].filter(([, v]) => v).map(([k, v]) => (
+                                  <div key={k as string} className="flex gap-1">
+                                    <span className="shrink-0 text-gray-400 dark:text-gray-500">{k}:</span>
+                                    <span className="break-all text-gray-600 dark:text-gray-300">{v}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
                         </div>
                       );
                     })()}
@@ -789,6 +829,40 @@ export default function StbAutomationPanel() {
                         </span>
                       )}
                     </div>
+                    {/* State read timing waterfall */}
+                    {screenState.diag && (screenState.diag.adb_total_ms ?? 0) > 0 && (() => {
+                      const d = screenState.diag!;
+                      const total = d.adb_total_ms || 1;
+                      const steps = [
+                        { label: 'foreground', ms: d.adb_foreground_ms || 0, color: 'bg-blue-400' },
+                        { label: 'hierarchy', ms: d.adb_hierarchy_ms || 0, color: 'bg-red-400' },
+                        { label: 'fragments', ms: d.adb_fragments_ms || 0, color: 'bg-cyan-400' },
+                        { label: 'win title', ms: d.adb_window_title_ms || 0, color: 'bg-gray-400' },
+                      ].filter(s => s.ms > 0);
+                      if (steps.length === 0) return null;
+                      return (
+                        <div className="space-y-0.5">
+                          {steps.map(s => (
+                            <div key={s.label} className="flex items-center gap-1.5">
+                              <span className="w-[60px] text-right text-[10px] text-gray-500 dark:text-gray-400">{s.label}</span>
+                              <div className="relative h-2.5 flex-1 rounded-sm bg-gray-200 dark:bg-gray-700">
+                                <div className={`absolute left-0 top-0 h-full rounded-sm ${s.color}`} style={{ width: `${Math.max(1, (s.ms / total) * 100)}%` }} />
+                              </div>
+                              <span className="w-[36px] text-right tabular-nums text-[9px] text-gray-600 dark:text-gray-300">{s.ms}ms</span>
+                            </div>
+                          ))}
+                          {d.frame_hash_ms ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-[60px] text-right text-[10px] text-gray-500 dark:text-gray-400">frame hash</span>
+                              <div className="relative h-2.5 flex-1 rounded-sm bg-gray-200 dark:bg-gray-700">
+                                <div className="absolute left-0 top-0 h-full rounded-sm bg-amber-400" style={{ width: `${Math.max(1, (d.frame_hash_ms / total) * 100)}%` }} />
+                              </div>
+                              <span className="w-[36px] text-right tabular-nums text-[9px] text-gray-600 dark:text-gray-300">{d.frame_hash_ms}ms</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     <div>
                       <span className="text-gray-500 dark:text-gray-400">Package: </span>
                       <span className="text-gray-900 dark:text-white">{screenState.state.package || '\u2014'}</span>

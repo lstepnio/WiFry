@@ -741,6 +741,16 @@ export interface StbNavigateTimingDetail {
   total_ms: number;
 }
 
+export interface StbNavigateSignals {
+  package: string;
+  activity: string;
+  window_title: string;
+  fragments: string[];
+  focused_element: string | null;
+  focused_context: string;
+  ui_elements_count: number;
+}
+
 export interface StbNavigateTiming {
   pre_state_ms: number;
   key_press_ms: number;
@@ -749,6 +759,7 @@ export interface StbNavigateTiming {
   settle_read_detail: StbNavigateTimingDetail;
   post_fingerprint_ms: number;
   total_ms: number;
+  signals?: StbNavigateSignals;
 }
 
 export interface StbNavigateResponse {
