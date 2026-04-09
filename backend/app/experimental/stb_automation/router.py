@@ -576,6 +576,7 @@ class NavigateResponse(BaseModel):
     transitioned: bool
     settle_method: str
     settle_ms: float
+    timing: Optional[dict] = None
 
 
 @router.post("/navigate")
@@ -619,6 +620,7 @@ async def navigate(req: NavigateRequest) -> NavigateResponse:
         transitioned=result.transitioned,
         settle_method=result.settle_method,
         settle_ms=round(result.settle_ms, 1),
+        timing=result.timing,
     )
 
 

@@ -733,6 +733,24 @@ export interface StbStatus {
   crawl: StbCrawlStatus;
 }
 
+export interface StbNavigateTimingDetail {
+  foreground_ms: number;
+  hierarchy_ms: number;
+  fragments_ms: number;
+  window_title_ms: number;
+  total_ms: number;
+}
+
+export interface StbNavigateTiming {
+  pre_state_ms: number;
+  key_press_ms: number;
+  settle_wait_ms: number;
+  settle_read_ms: number;
+  settle_read_detail: StbNavigateTimingDetail;
+  post_fingerprint_ms: number;
+  total_ms: number;
+}
+
 export interface StbNavigateResponse {
   action: string;
   pre_state: StbScreenState;
@@ -742,6 +760,7 @@ export interface StbNavigateResponse {
   transitioned: boolean;
   settle_method: string;
   settle_ms: number;
+  timing?: StbNavigateTiming;
 }
 
 export interface StbTransitionEdge {

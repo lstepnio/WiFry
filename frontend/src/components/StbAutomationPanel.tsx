@@ -674,6 +674,45 @@ export default function StbAutomationPanel() {
                         {lastNav.settle_ms}ms ({lastNav.settle_method})
                       </span>
                     </div>
+                    {/* Timing waterfall */}
+                    {lastNav.timing && (() => {
+                      const t = lastNav.timing!;
+                      const total = t.total_ms || 1;
+                      const steps = [
+                        { label: 'pre-state', ms: t.pre_state_ms, color: 'bg-blue-400' },
+                        { label: 'key press', ms: t.key_press_ms, color: 'bg-amber-400' },
+                        { label: 'settle wait', ms: t.settle_wait_ms, color: 'bg-purple-400' },
+                        { label: 'settle read', ms: t.settle_read_ms, color: 'bg-cyan-400' },
+                        { label: 'fingerprint', ms: t.post_fingerprint_ms, color: 'bg-gray-400' },
+                      ];
+                      const detail = t.settle_read_detail;
+                      return (
+                        <div className="mt-2 space-y-0.5">
+                          {steps.map(s => (
+                            <div key={s.label} className="flex items-center gap-1.5">
+                              <span className="w-[72px] text-right text-[10px] text-gray-500 dark:text-gray-400">{s.label}</span>
+                              <div className="relative h-3 flex-1 rounded-sm bg-gray-200 dark:bg-gray-700">
+                                <div className={`absolute left-0 top-0 h-full rounded-sm ${s.color}`} style={{ width: `${Math.max(1, (s.ms / total) * 100)}%` }} />
+                              </div>
+                              <span className="w-[40px] text-right tabular-nums text-[10px] text-gray-600 dark:text-gray-300">{Math.round(s.ms)}ms</span>
+                            </div>
+                          ))}
+                          {detail && detail.total_ms > 0 && (
+                            <div className="ml-[78px] mt-0.5 flex gap-2 text-[9px] text-gray-400 dark:text-gray-500">
+                              {detail.foreground_ms > 0 && <span>fg:{detail.foreground_ms}ms</span>}
+                              {detail.hierarchy_ms > 0 && <span>hier:{detail.hierarchy_ms}ms</span>}
+                              {detail.fragments_ms > 0 && <span>frag:{detail.fragments_ms}ms</span>}
+                              {detail.window_title_ms > 0 && <span>wt:{detail.window_title_ms}ms</span>}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-[72px] text-right text-[10px] font-medium text-gray-600 dark:text-gray-300">total</span>
+                            <div className="flex-1 border-t border-gray-300 dark:border-gray-600" />
+                            <span className="w-[40px] text-right tabular-nums text-[10px] font-medium text-gray-600 dark:text-gray-300">{Math.round(total)}ms</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
