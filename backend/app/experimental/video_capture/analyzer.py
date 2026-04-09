@@ -60,6 +60,11 @@ of a set-top box (e.g., Roku, Apple TV, Fire TV, Android TV, cable box). \
 Your job is to identify the current screen state and which UI element has \
 focus or is highlighted.
 
+IMPORTANT: Focus ONLY on the active foreground panel or dialog. Ignore any \
+dimmed, grayed-out, or partially visible background content behind the active \
+UI layer. Only report text, elements, and navigation paths from the \
+currently active panel.
+
 Respond with valid JSON matching the schema below. Be precise about what you \
 see. If you cannot determine something with confidence, say so rather than \
 guessing."""
@@ -103,10 +108,17 @@ def get_snapshot() -> Optional[bytes]:
     return streamer.get_latest_frame()
 
 
+def get_default_prompts() -> tuple[str, str]:
+    """Return the default (system_prompt, user_prompt) pair."""
+    return _SYSTEM_PROMPT, _USER_PROMPT
+
+
 async def analyze_frame(
     frame_jpeg: bytes,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
 ) -> FrameAnalysisResult:
     """EXPERIMENTAL_VIDEO_CAPTURE — Send a frame to AI vision and parse the result.
 
@@ -114,12 +126,16 @@ async def analyze_frame(
         frame_jpeg: Raw JPEG bytes of the frame to analyze.
         provider: "anthropic" or "openai". Defaults to settings.ai_provider.
         model: Model override. Defaults to settings.ai_model or provider default.
+        system_prompt: Override the default system prompt.
+        user_prompt: Override the default user prompt.
 
     Returns:
         FrameAnalysisResult with structured analysis or error details.
     """
     provider = provider or settings.ai_provider
     analyzed_at = datetime.now(timezone.utc).isoformat()
+    sys_prompt = system_prompt or _SYSTEM_PROMPT
+    usr_prompt = user_prompt or _USER_PROMPT
 
     if settings.mock_mode:
         logger.info("[EXPERIMENTAL_VIDEO_CAPTURE] Mock analysis")
@@ -129,9 +145,9 @@ async def analyze_frame(
 
     try:
         if provider == "anthropic":
-            return await _analyze_anthropic(b64_frame, model, analyzed_at)
+            return await _analyze_anthropic(b64_frame, model, analyzed_at, sys_prompt, usr_prompt)
         else:
-            return await _analyze_openai(b64_frame, model, analyzed_at)
+            return await _analyze_openai(b64_frame, model, analyzed_at, sys_prompt, usr_prompt)
     except Exception as e:
         logger.exception("[EXPERIMENTAL_VIDEO_CAPTURE] Vision analysis failed")
         return FrameAnalysisResult(
@@ -149,6 +165,8 @@ async def _analyze_anthropic(
     b64_frame: str,
     model_override: Optional[str],
     analyzed_at: str,
+    sys_prompt: str = _SYSTEM_PROMPT,
+    usr_prompt: str = _USER_PROMPT,
 ) -> FrameAnalysisResult:
     """EXPERIMENTAL_VIDEO_CAPTURE — Anthropic Claude vision analysis."""
     import anthropic
@@ -161,7 +179,7 @@ async def _analyze_anthropic(
     response = await client.messages.create(
         model=model,
         max_tokens=1024,
-        system=_SYSTEM_PROMPT,
+        system=sys_prompt,
         messages=[{
             "role": "user",
             "content": [
@@ -173,7 +191,7 @@ async def _analyze_anthropic(
                         "data": b64_frame,
                     },
                 },
-                {"type": "text", "text": _USER_PROMPT},
+                {"type": "text", "text": usr_prompt},
             ],
         }],
     )
@@ -193,6 +211,8 @@ async def _analyze_openai(
     b64_frame: str,
     model_override: Optional[str],
     analyzed_at: str,
+    sys_prompt: str = _SYSTEM_PROMPT,
+    usr_prompt: str = _USER_PROMPT,
 ) -> FrameAnalysisResult:
     """EXPERIMENTAL_VIDEO_CAPTURE — OpenAI GPT vision analysis."""
     import openai
@@ -206,11 +226,11 @@ async def _analyze_openai(
         model=model,
         max_completion_tokens=1024,
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": _USER_PROMPT},
+                    {"type": "text", "text": usr_prompt},
                     {
                         "type": "image_url",
                         "image_url": {

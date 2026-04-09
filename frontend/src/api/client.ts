@@ -384,10 +384,15 @@ export async function getStbStatus(): Promise<import('../types').StbStatus> {
   return request('/experimental/stb/status');
 }
 
-export async function getStbState(serial: string, includeHierarchy: boolean = true, includeVision: boolean = false, visionThreshold?: number, signal?: AbortSignal): Promise<import('../types').StbScreenStateResponse> {
+export async function getStbState(serial: string, includeHierarchy: boolean = true, includeVision: boolean = false, visionThreshold?: number, signal?: AbortSignal, visionPrompt?: string): Promise<import('../types').StbScreenStateResponse> {
   const params = new URLSearchParams({ serial, include_hierarchy: String(includeHierarchy), include_vision: String(includeVision) });
   if (visionThreshold !== undefined) params.set('vision_threshold', String(visionThreshold));
+  if (visionPrompt) params.set('vision_prompt', visionPrompt);
   return request(`/experimental/stb/state?${params}`, signal ? { signal } : undefined);
+}
+
+export async function getStbVisionPrompt(): Promise<{ system_prompt: string; user_prompt: string }> {
+  return request('/experimental/stb/vision/prompt');
 }
 
 export async function getStbVisionCache(): Promise<import('../types').StbVisionCacheDebug> {
