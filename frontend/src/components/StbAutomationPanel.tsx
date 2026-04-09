@@ -1306,20 +1306,20 @@ export default function StbAutomationPanel() {
                   // Find all unique labels and their "enter" children
                   const childrenOf = new Map<string, Array<{ to: string; conf: number; obs: number }>>();
                   for (const e of enterEdges) {
-                    if (!childrenOf.has(e.from_focused)) childrenOf.set(e.from_focused, []);
-                    childrenOf.get(e.from_focused)!.push({ to: e.to_focused, conf: e.confidence, obs: e.observation_count });
+                    if (!childrenOf.has(e.from_element)) childrenOf.set(e.from_element, []);
+                    childrenOf.get(e.from_element)!.push({ to: e.to_element, conf: e.confidence, obs: e.observation_count });
                   }
 
                   // Find root candidates: labels that appear as from_focused but NOT as to_focused of an "enter"
-                  const enterTargets = new Set(enterEdges.map(e => e.to_focused));
-                  const allLabels = new Set([...mapScreenEntries.map(e => e.from_focused), ...mapScreenEntries.map(e => e.to_focused)]);
+                  const enterTargets = new Set(enterEdges.map(e => e.to_element));
+                  const allLabels = new Set([...mapScreenEntries.map(e => e.from_element), ...mapScreenEntries.map(e => e.to_element)]);
                   const rootCandidates = Array.from(allLabels).filter(l => !enterTargets.has(l));
 
                   // Group D-pad siblings per label
                   const siblingsOf = new Map<string, TreeNode['siblings']>();
                   for (const e of dpadEdges) {
-                    if (!siblingsOf.has(e.from_focused)) siblingsOf.set(e.from_focused, []);
-                    siblingsOf.get(e.from_focused)!.push({ action: e.action, to: e.to_focused, confidence: e.confidence, observations: e.observation_count });
+                    if (!siblingsOf.has(e.from_element)) siblingsOf.set(e.from_element, []);
+                    siblingsOf.get(e.from_element)!.push({ action: e.action, to: e.to_element, confidence: e.confidence, observations: e.observation_count });
                   }
 
                   // Build tree recursively (with visited guard)
@@ -1415,8 +1415,8 @@ export default function StbAutomationPanel() {
                           {mapScreenEntries.map((e, i) => (
                             <tr key={i} className="border-b border-gray-100 dark:border-gray-800">
                               <td className="py-1 pr-2 font-medium text-gray-700 dark:text-gray-300">{e.action}</td>
-                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.from_focused}</td>
-                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.to_focused}</td>
+                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.from_element}</td>
+                              <td className="py-1 pr-2 text-gray-600 dark:text-gray-400">{e.to_element}</td>
                               <td className="py-1 pr-2 text-right tabular-nums text-gray-500">{e.observation_count}</td>
                               <td className={`py-1 text-right tabular-nums font-medium ${confColor(e.confidence)}`}>{Math.round(e.confidence * 100)}%</td>
                             </tr>

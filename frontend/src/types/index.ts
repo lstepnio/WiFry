@@ -792,8 +792,9 @@ export interface StbNavigateResponse {
 export interface UIMapEntry {
   screen_key: string;
   action: string;
-  from_focused: string;
-  to_focused: string;
+  from_element: string;
+  to_element: string;
+  to_screen_key?: string;
   to_screen_type: string;
   to_screen_title: string;
   to_focused_position: string;
@@ -801,7 +802,10 @@ export interface UIMapEntry {
   to_navigation_path: string[];
   observation_count: number;
   confidence: number;
+  avg_transition_ms?: number;
+  no_effect_count?: number;
   last_observed: string;
+  sources?: string[];
 }
 
 export interface UIMapScreenSummary {
