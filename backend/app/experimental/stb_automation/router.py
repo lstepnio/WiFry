@@ -453,6 +453,7 @@ async def get_state(
 
         # ── MAP HIT: use prediction, skip AI call entirely ────────
         if map_prediction is not None:
+            vision_cache.credit_map_hit()  # correct hit/miss ratio
             predicted_vision = VisionAnalysis(
                 screen_type=map_prediction.to_screen_type,
                 screen_title=map_prediction.to_screen_title,

@@ -138,6 +138,19 @@ def get(key: str) -> Optional[VisionAnalysis]:
     return None
 
 
+def credit_map_hit() -> None:
+    """Credit a UI map prediction as a cache hit.
+
+    Called by the router when the UI map handles a request that the
+    vision cache missed.  Corrects the hit/miss ratio to reflect
+    the overall 'avoided AI call' rate.
+    """
+    global _hits, _misses
+    _hits += 1
+    if _misses > 0:
+        _misses -= 1
+
+
 def put(key: str, analysis: VisionAnalysis) -> None:
     """Store an entry, evict LRU if over max."""
     global _dirty
